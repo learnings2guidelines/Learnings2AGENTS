@@ -4,7 +4,9 @@ from learnings2agents.heuristics import synthesize_heuristic
 from learnings2agents.models import Learning
 
 
-def _learning(text: str, pull_request: str, usage: int = 1, repository: str = "acme-repo") -> Learning:
+def _learning(
+    text: str, pull_request: str, usage: int = 1, repository: str = "acme-repo"
+) -> Learning:
     return Learning(
         text=text,
         repository=repository,
@@ -42,7 +44,9 @@ def test_near_duplicate_texts_are_merged_into_one_bullet():
 def test_distinct_texts_remain_separate_bullets():
     learnings = [
         _learning("Always import logging as a whole module.", pull_request="1"),
-        _learning("Assertion messages are required for integration tests.", pull_request="2"),
+        _learning(
+            "Assertion messages are required for integration tests.", pull_request="2"
+        ),
     ]
     bullets = synthesize_heuristic(learnings)
     assert len(bullets) == 2

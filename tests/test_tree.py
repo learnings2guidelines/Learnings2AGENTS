@@ -5,15 +5,15 @@ from learnings2agents.tree import filter_existing_directories, group_by_director
 
 
 def _learning(file: str, text: str = "Some learning", **kwargs) -> Learning:
-    defaults = dict(
-        text=text,
-        repository="repo",
-        file=file,
-        pull_request="1",
-        url="",
-        created_by="someone",
-        usage=1,
-    )
+    defaults = {
+        "text": text,
+        "repository": "repo",
+        "file": file,
+        "pull_request": "1",
+        "url": "",
+        "created_by": "someone",
+        "usage": 1,
+    }
     defaults.update(kwargs)
     return Learning(**defaults)
 

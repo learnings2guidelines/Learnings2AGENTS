@@ -1,0 +1,37 @@
+[flake8]
+# UFN plugin must be run in serial (UniqueFixturesNames requires jobs=0)
+jobs = 0
+
+# Ignore rules that conflict with ruff or are intentionally suppressed.
+#
+# Handled by ruff (suppressed in flake8 to avoid duplicate enforcement):
+#   E501 — line too long; ruff formatter manages line length
+#   E201 — whitespace after '('; ruff formatter manages whitespace
+#   W503 — line break before binary operator; PEP 8 reversed this, ruff uses W504 (after)
+#
+# Suppressed in flake8 only (enforced by ruff via extend-select + per-line # noqa):
+#   N802 — function name should be lowercase; reserved for method overrides
+#   N815 — mixedCaseClassAttribute; can be suppressed per-line with # noqa: N815
+ignore = E501, E201, W503, N802, N815
+
+exclude =
+    .tox,
+    .git,
+    .venv,
+    .yml,
+    .cache/*,
+    docs/*,
+
+# Enabled extensions (from RedHatQE/flake8-plugins):
+#   UFN — UniqueFixturesNames: enforces unique pytest fixture names across the repo
+#   NIC — NoImportFromConftest: prevents importing from conftest.py in non-test code
+#   NIT — NoImportFromTests: prevents importing from test files in production code
+#
+# Intentionally NOT enabled:
+#   FCN — FunctionCallForceNames: forces keyword args on every call; too opinionated
+#          for non-test-infra code and has open false-positive bug (positional-only params)
+#   PID — PolarionIds: enforces Polarion test management IDs; RedHatQE internal only
+enable-extensions =
+    UFN,
+    NIC,
+    NIT,

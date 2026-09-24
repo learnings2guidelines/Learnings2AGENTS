@@ -39,7 +39,9 @@ def test_cli_end_to_end_heuristic_mode_writes_expected_agents_md(tmp_path):
     # tests/network/libs/*.py learnings -> target/tests/network/libs/AGENTS.md
     assert (target / "tests" / "network" / "libs" / "AGENTS.md").is_file()
 
-    content = (target / "utilities" / "unittests" / "AGENTS.md").read_text(encoding="utf-8")
+    content = (target / "utilities" / "unittests" / "AGENTS.md").read_text(
+        encoding="utf-8"
+    )
     assert "<!-- BEGIN CODERABBIT LEARNINGS -->" in content
     assert "<!-- END CODERABBIT LEARNINGS -->" in content
 

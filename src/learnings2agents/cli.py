@@ -154,14 +154,20 @@ def main(argv: list[str] | None = None) -> int:
             target_path,
         )
         return 1
-    logger.info("Found %d director%s with learnings to process.", len(groups), "y" if len(groups) == 1 else "ies")
+    logger.info(
+        "Found %d director%s with learnings to process.",
+        len(groups),
+        "y" if len(groups) == 1 else "ies",
+    )
 
     gemini_client = None
     if args.gemini_api_key:
         if args.model:
             # User explicitly chose a model — use it directly, no probing.
             gemini_client = GeminiClient(api_key=args.gemini_api_key, model=args.model)
-            logger.info("Gemini API key provided: using LLM mode (model=%s).", args.model)
+            logger.info(
+                "Gemini API key provided: using LLM mode (model=%s).", args.model
+            )
         else:
             # Auto-detect: probe the chain and pick the first available model.
             logger.info(
@@ -175,14 +181,19 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 logger.info("Using Gemini model: %s.", gemini_client.model)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("All Gemini models unavailable (%s); falling back to heuristic mode.", exc)
+                logger.warning(
+                    "All Gemini models unavailable (%s); falling back to heuristic mode.",
+                    exc,
+                )
     else:
         logger.info("No Gemini API key provided: using heuristic mode.")
 
     cache = None
     if not args.no_cache:
         cache_dir = (
-            Path(args.cache_dir) if args.cache_dir else target_path / DEFAULT_CACHE_DIRNAME
+            Path(args.cache_dir)
+            if args.cache_dir
+            else target_path / DEFAULT_CACHE_DIRNAME
         )
         cache = SynthesisCache(cache_dir)
 

@@ -27,10 +27,10 @@ def _strip_boilerplate(text: str, repository: str) -> str:
         repo_escaped = re.escape(repository)
         short_name = re.escape(repository.rsplit("/", 1)[-1])
         patterns = [
-            rf"^In (the )?(RedHatQE/)?{repo_escaped}(?: repository)?,\s*",
-            rf"^In (the )?(RedHatQE/)?{short_name}(?: repository)?,\s*",
-            rf"^In (the )?(RedHatQE/)?{repo_escaped} project(?: [^\s,]+)?,\s*",
-            rf"^In (the )?(RedHatQE/)?{short_name} project(?: [^\s,]+)?,\s*",
+            rf"^In (the )?(?:[^/\s]+/)?{repo_escaped}(?: repository)?,\s*",
+            rf"^In (the )?(?:[^/\s]+/)?{short_name}(?: repository)?,\s*",
+            rf"^In (the )?(?:[^/\s]+/)?{repo_escaped} project(?: [^\s,]+)?,\s*",
+            rf"^In (the )?(?:[^/\s]+/)?{short_name} project(?: [^\s,]+)?,\s*",
         ]
         for pattern in patterns:
             new_cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE, count=1)
@@ -63,9 +63,7 @@ class _Cluster:
         return seen
 
 
-def _cluster_learnings(
-    learnings: list[Learning], threshold: float
-) -> list[_Cluster]:
+def _cluster_learnings(learnings: list[Learning], threshold: float) -> list[_Cluster]:
     """Greedily cluster near-duplicate learning texts using difflib similarity.
 
     Two learnings land in the same cluster if their raw text similarity ratio
@@ -115,7 +113,8 @@ def synthesize_heuristic(
         )
 
     usage_by_index = [
-        sum(l.usage for l in cluster.all_learnings) for cluster in clusters
+        sum(learning.usage for learning in cluster.all_learnings)
+        for cluster in clusters
     ]
     order = sorted(range(len(bullets)), key=lambda i: usage_by_index[i], reverse=True)
     return [bullets[i] for i in order]

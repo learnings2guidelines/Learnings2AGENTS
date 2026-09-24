@@ -11,8 +11,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import pytest
-
 from learnings2agents.cli import build_arg_parser, main
 from learnings2agents.llm import GeminiClient, LlmSynthesisError
 
@@ -35,7 +33,9 @@ def test_help_text_does_not_contain_api_key(monkeypatch):
     assert SENTINEL_KEY not in help_text
 
 
-def test_cli_run_never_logs_or_prints_the_api_key(tmp_path, monkeypatch, caplog, capsys):
+def test_cli_run_never_logs_or_prints_the_api_key(
+    tmp_path, monkeypatch, caplog, capsys
+):
     target = _make_target_repo(tmp_path)
 
     def _boom(self, directory, learnings):

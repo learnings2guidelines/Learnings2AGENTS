@@ -89,7 +89,9 @@ class WriteResult:
     action: str  # "created" | "updated" | "skipped-empty" | "dry-run"
 
 
-def write_agents_md(target_dir: Path, group: DirGroup, dry_run: bool = False) -> WriteResult:
+def write_agents_md(
+    target_dir: Path, group: DirGroup, dry_run: bool = False
+) -> WriteResult:
     """Write/merge the AGENTS.md file for one directory's synthesized bullets."""
     agents_path = target_dir / AGENTS_FILENAME
 

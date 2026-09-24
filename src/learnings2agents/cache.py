@@ -22,7 +22,7 @@ def _cache_key(path: str, learnings: list[Learning], mode: str, model: str) -> s
         "path": path,
         "mode": mode,
         "model": model if mode == "llm" else "",
-        "texts": sorted(f"{l.file}::{l.text}" for l in learnings),
+        "texts": sorted(f"{learning.file}::{learning.text}" for learning in learnings),
     }
     blob = json.dumps(payload, sort_keys=True).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()

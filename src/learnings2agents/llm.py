@@ -50,7 +50,11 @@ where each element is an object:
 
 
 def _build_prompt(directory: str, learnings: list[Learning]) -> str:
-    lines = [f"Directory: {directory or '(repository root)'}", "", "Numbered learnings:"]
+    lines = [
+        f"Directory: {directory or '(repository root)'}",
+        "",
+        "Numbered learnings:",
+    ]
     for i, learning in enumerate(learnings, start=1):
         lines.append(f"{i}. {learning.text}")
     lines.append("")
@@ -90,7 +94,7 @@ class GeminiClient:
         cls,
         api_key: str,
         models: list[str] = DEFAULT_GEMINI_MODEL_CHAIN,
-    ) -> "GeminiClient":
+    ) -> GeminiClient:
         """Try each model in *models* with a lightweight probe and return the
         first one that responds successfully.
 
@@ -151,7 +155,7 @@ class GeminiClient:
                     "response_mime_type": "application/json",
                 },
             )
-        except Exception as exc:  # noqa: BLE001 - network/auth/quota errors, etc.
+        except Exception as exc:  # network/auth/quota errors, etc.
             raise LlmSynthesisError(
                 f"Gemini API call failed for directory '{directory or '(root)'}': {exc}"
             ) from exc
@@ -195,7 +199,9 @@ class GeminiClient:
                 # PR in the directory rather than losing attribution entirely.
                 prs = all_prs
 
-            bullets.append(SynthesizedBullet(text=text, pull_requests=prs, heading=heading))
+            bullets.append(
+                SynthesizedBullet(text=text, pull_requests=prs, heading=heading)
+            )
 
         if not bullets:
             raise LlmSynthesisError(

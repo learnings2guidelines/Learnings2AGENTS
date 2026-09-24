@@ -40,11 +40,14 @@ def test_load_learnings_reads_fixture():
     learnings = load_learnings(FIXTURE_CSV)
     assert len(learnings) == 8
     # Root-level learning (empty File) preserved as "".
-    assert any(l.file == "" for l in learnings)
+    assert any(learning.file == "" for learning in learnings)
     # File paths are normalized (no leading "./" or "/").
-    assert all(not l.file.startswith("/") and not l.file.startswith("./") for l in learnings)
+    assert all(
+        not learning.file.startswith("/") and not learning.file.startswith("./")
+        for learning in learnings
+    )
     # Usage parsed as int.
-    assert all(isinstance(l.usage, int) for l in learnings)
+    assert all(isinstance(learning.usage, int) for learning in learnings)
 
 
 def test_load_learnings_skips_blank_learning_rows(tmp_path):
@@ -53,7 +56,12 @@ def test_load_learnings_skips_blank_learning_rows(tmp_path):
         path,
         [
             {"Learning": "  ", "Repository": "repo", "File": "a.py"},
-            {"Learning": "Real learning", "Repository": "repo", "File": "a.py", "Usage": "3"},
+            {
+                "Learning": "Real learning",
+                "Repository": "repo",
+                "File": "a.py",
+                "Usage": "3",
+            },
         ],
     )
     learnings = load_learnings(path)
@@ -74,7 +82,7 @@ def test_load_learnings_missing_required_column_raises(tmp_path):
 
 def test_directory_property_for_nested_and_root_files():
     learnings = load_learnings(FIXTURE_CSV)
-    by_file = {l.file: l for l in learnings}
+    by_file = {learning.file: learning for learning in learnings}
     assert by_file["utilities/oadp.py"].directory == "utilities"
     assert by_file["utilities/unittests/test_hco.py"].directory == "utilities/unittests"
     assert by_file[""].directory == ""
@@ -89,7 +97,9 @@ def test_select_repository_auto_detects_single_repo():
 
 def test_select_repository_explicit_match():
     learnings = load_learnings(FIXTURE_CSV)
-    repository, filtered = select_repository(learnings, repository="openshift-virtualization-tests")
+    repository, filtered = select_repository(
+        learnings, repository="openshift-virtualization-tests"
+    )
     assert repository == "openshift-virtualization-tests"
     assert len(filtered) == len(learnings)
 

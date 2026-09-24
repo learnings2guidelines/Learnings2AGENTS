@@ -96,10 +96,14 @@ def select_repository(
     (e.g. a hand-built CSV without that column populated), in which case all
     learnings are returned unfiltered.
     """
-    repo_counts = Counter(l.repository for l in learnings if l.repository)
+    repo_counts = Counter(
+        learning.repository for learning in learnings if learning.repository
+    )
 
     if repository:
-        filtered = [l for l in learnings if l.repository == repository]
+        filtered = [
+            learning for learning in learnings if learning.repository == repository
+        ]
         if not filtered:
             available = ", ".join(sorted(repo_counts)) or "(none found)"
             raise ValueError(
@@ -114,6 +118,8 @@ def select_repository(
 
     if len(repo_counts) == 1:
         (only_repo,) = repo_counts
-        return only_repo, [l for l in learnings if l.repository == only_repo]
+        return only_repo, [
+            learning for learning in learnings if learning.repository == only_repo
+        ]
 
     raise AmbiguousRepositoryError(sorted(repo_counts))

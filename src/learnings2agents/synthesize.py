@@ -42,7 +42,9 @@ def synthesize_all(
         bullets = None
         if gemini_client is not None:
             try:
-                bullets = gemini_client.synthesize_directory(group.path, group.learnings)
+                bullets = gemini_client.synthesize_directory(
+                    group.path, group.learnings
+                )
                 mode = "llm"
             except LlmSynthesisError as exc:
                 logger.warning(

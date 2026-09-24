@@ -23,8 +23,12 @@ def test_render_bullets_flat_list_includes_pr_refs():
 
 def test_render_bullets_groups_under_headings_when_present():
     bullets = [
-        SynthesizedBullet(text="Import as whole module.", pull_requests=["1"], heading="Imports"),
-        SynthesizedBullet(text="Use TimeoutSampler.", pull_requests=["2"], heading="Testing"),
+        SynthesizedBullet(
+            text="Import as whole module.", pull_requests=["1"], heading="Imports"
+        ),
+        SynthesizedBullet(
+            text="Use TimeoutSampler.", pull_requests=["2"], heading="Testing"
+        ),
     ]
     rendered = render_bullets(bullets)
     assert "### Imports" in rendered
@@ -62,7 +66,9 @@ def test_merge_into_existing_appends_when_no_markers_present():
 
 
 def test_write_agents_md_creates_new_file(tmp_path):
-    group = DirGroup(path="utilities", bullets=[SynthesizedBullet(text="Do X.", pull_requests=["1"])])
+    group = DirGroup(
+        path="utilities", bullets=[SynthesizedBullet(text="Do X.", pull_requests=["1"])]
+    )
     result = write_agents_md(tmp_path, group)
     assert result.action == "created"
     content = result.path.read_text(encoding="utf-8")
@@ -81,7 +87,9 @@ def test_write_agents_md_preserves_hand_written_content_on_update(tmp_path):
     agents_path = tmp_path / "AGENTS.md"
     agents_path.write_text("# AGENTS.md\n\nManually written notes.\n", encoding="utf-8")
 
-    group = DirGroup(path="", bullets=[SynthesizedBullet(text="Do X.", pull_requests=["1"])])
+    group = DirGroup(
+        path="", bullets=[SynthesizedBullet(text="Do X.", pull_requests=["1"])]
+    )
     result = write_agents_md(tmp_path, group)
     assert result.action == "updated"
 
@@ -91,7 +99,9 @@ def test_write_agents_md_preserves_hand_written_content_on_update(tmp_path):
 
 
 def test_write_agents_md_dry_run_does_not_touch_disk(tmp_path):
-    group = DirGroup(path="utilities", bullets=[SynthesizedBullet(text="Do X.", pull_requests=["1"])])
+    group = DirGroup(
+        path="utilities", bullets=[SynthesizedBullet(text="Do X.", pull_requests=["1"])]
+    )
     result = write_agents_md(tmp_path, group, dry_run=True)
     assert result.action == "dry-run-created"
     assert not (tmp_path / "utilities" / "AGENTS.md").exists()
@@ -102,9 +112,17 @@ def test_write_all_writes_into_correct_subdirectories(tmp_path):
     (tmp_path / "tests" / "network").mkdir(parents=True)
 
     groups = [
-        DirGroup(path="", bullets=[SynthesizedBullet(text="Root rule.", pull_requests=["1"])]),
-        DirGroup(path="utilities", bullets=[SynthesizedBullet(text="Utils rule.", pull_requests=["2"])]),
-        DirGroup(path="tests/network", bullets=[SynthesizedBullet(text="Net rule.", pull_requests=["3"])]),
+        DirGroup(
+            path="", bullets=[SynthesizedBullet(text="Root rule.", pull_requests=["1"])]
+        ),
+        DirGroup(
+            path="utilities",
+            bullets=[SynthesizedBullet(text="Utils rule.", pull_requests=["2"])],
+        ),
+        DirGroup(
+            path="tests/network",
+            bullets=[SynthesizedBullet(text="Net rule.", pull_requests=["3"])],
+        ),
     ]
     results = write_all(groups, tmp_path)
 
