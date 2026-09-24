@@ -1,10 +1,9 @@
-name: model-tests
+name: model-only-tests
 # Tests that the tool handles a configured model name without an API key —
 # it must fall back gracefully to heuristic mode (no crash, no LLM calls).
-# Only GEMINI_MODEL is set; GEMINI_API_KEY is intentionally absent.
+# Only GEMINI_MODEL is set; GEMINI_API_KEY is intentionally left empty.
 #
 # Required repository variable: vars.GEMINI_MODEL
-# Must NOT have repository secret:  secrets.GEMINI_API_KEY
 
 on:
   push:
@@ -13,23 +12,20 @@ on:
     branches: ["main"]
 
 jobs:
-  model-tests:
-    name: model-tests
+  model-only-tests:
+    name: model-only-tests
     if: ${{ !github.event.repository.fork }}
     runs-on: ubuntu-latest
     env:
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+      # Intentionally empty: tests should run in heuristic mode without an API key.
+      GEMINI_API_KEY: ""
+
     steps:
       - name: Validate environment
-        env:
-          GEMINI_API_KEY_CHECK: ${{ secrets.GEMINI_API_KEY }}
         run: |
           if [ -z "$GEMINI_MODEL" ]; then
             echo "::error::vars.GEMINI_MODEL is not set. Add it as a repository variable." >&2
-            exit 1
-          fi
-          if [ -n "$GEMINI_API_KEY_CHECK" ]; then
-            echo "::error::secrets.GEMINI_API_KEY must NOT be set for this workflow. Remove it or use api-key-model-tests instead." >&2
             exit 1
           fi
 

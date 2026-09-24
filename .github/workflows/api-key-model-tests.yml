@@ -1,4 +1,4 @@
-name: api-key-model-tests
+name: api-key-and-model-tests
 # Tests LLM mode with an explicitly pinned model (no chain probe needed).
 # Both GEMINI_API_KEY and GEMINI_MODEL are set.
 #
@@ -12,13 +12,14 @@ on:
     branches: ["main"]
 
 jobs:
-  api-key-model-tests:
-    name: api-key-model-tests
+  api-key-and-model-tests:
+    name: api-key-and-model-tests
     if: ${{ !github.event.repository.fork }}
     runs-on: ubuntu-latest
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+      GEMINI_MODEL:   ${{ vars.GEMINI_MODEL }}
+
     steps:
       - name: Validate environment
         run: |
