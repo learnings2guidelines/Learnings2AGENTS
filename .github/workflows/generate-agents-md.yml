@@ -39,10 +39,10 @@ jobs:
     environment: ${{ inputs.gh_environment }}
     steps:
       - name: Check out this tool
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Check out target repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ inputs.target_repo }}
           ref: ${{ inputs.target_ref || '' }}
@@ -52,7 +52,7 @@ jobs:
           # token: ${{ secrets.TARGET_REPO_TOKEN }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
