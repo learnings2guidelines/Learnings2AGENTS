@@ -3,7 +3,7 @@ name: api-key-model-tests
 # Both GEMINI_API_KEY and GEMINI_MODEL are set.
 #
 # Required repository secret:  secrets.GEMINI_API_KEY
-# Required repository variable: vars.GEMINI_MODEL (falls back to gemini-3.6-flash)
+# Required repository variable: vars.GEMINI_MODEL
 
 on:
   push:
@@ -14,11 +14,23 @@ on:
 jobs:
   api-key-model-tests:
     name: api-key-model-tests
+    if: ${{ !github.event.repository.fork }}
     runs-on: ubuntu-latest
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
     steps:
+      - name: Validate environment
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::secrets.GEMINI_API_KEY is not set. Add it as a repository secret." >&2
+            exit 1
+          fi
+          if [ -z "$GEMINI_MODEL" ]; then
+            echo "::error::vars.GEMINI_MODEL is not set. Add it as a repository variable." >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5

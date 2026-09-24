@@ -2,7 +2,8 @@ name: api-key-tests
 # Tests LLM mode with auto-detected model (the chain probe in GeminiClient).
 # Only GEMINI_API_KEY is set; GEMINI_MODEL is intentionally absent.
 #
-# Required repository secret: secrets.GEMINI_API_KEY
+# Required repository secret:  secrets.GEMINI_API_KEY
+# Must NOT have repository variable: vars.GEMINI_MODEL
 
 on:
   push:
@@ -13,10 +14,24 @@ on:
 jobs:
   api-key-tests:
     name: api-key-tests
+    if: ${{ !github.event.repository.fork }}
     runs-on: ubuntu-latest
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
     steps:
+      - name: Validate environment
+        env:
+          GEMINI_MODEL_CHECK: ${{ vars.GEMINI_MODEL }}
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::secrets.GEMINI_API_KEY is not set. Add it as a repository secret." >&2
+            exit 1
+          fi
+          if [ -n "$GEMINI_MODEL_CHECK" ]; then
+            echo "::error::vars.GEMINI_MODEL must NOT be set for this workflow. Remove it or use api-key-model-tests instead." >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5

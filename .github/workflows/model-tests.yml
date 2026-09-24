@@ -3,7 +3,8 @@ name: model-tests
 # it must fall back gracefully to heuristic mode (no crash, no LLM calls).
 # Only GEMINI_MODEL is set; GEMINI_API_KEY is intentionally absent.
 #
-# Required repository variable: vars.GEMINI_MODEL (falls back to gemini-3.6-flash)
+# Required repository variable: vars.GEMINI_MODEL
+# Must NOT have repository secret:  secrets.GEMINI_API_KEY
 
 on:
   push:
@@ -14,10 +15,24 @@ on:
 jobs:
   model-tests:
     name: model-tests
+    if: ${{ !github.event.repository.fork }}
     runs-on: ubuntu-latest
     env:
-      GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.6-flash' }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
     steps:
+      - name: Validate environment
+        env:
+          GEMINI_API_KEY_CHECK: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -z "$GEMINI_MODEL" ]; then
+            echo "::error::vars.GEMINI_MODEL is not set. Add it as a repository variable." >&2
+            exit 1
+          fi
+          if [ -n "$GEMINI_API_KEY_CHECK" ]; then
+            echo "::error::secrets.GEMINI_API_KEY must NOT be set for this workflow. Remove it or use api-key-model-tests instead." >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
