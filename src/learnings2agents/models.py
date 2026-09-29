@@ -35,6 +35,31 @@ class SynthesizedBullet:
 
 
 @dataclass
+class TextEdit:
+    """One exact-text replacement to apply to an existing AGENTS.md file.
+
+    `old_text` must match a unique, verbatim substring of the file's current
+    content; see `writer.apply_merge_plan` for how (and when) an edit is
+    skipped instead of applied.
+    """
+
+    old_text: str
+    new_text: str
+
+
+@dataclass
+class MergePlan:
+    """The LLM's proposed changes to fold new learnings into an existing
+    AGENTS.md file: exact-text edits for rules that already exist somewhere
+    in the file (merged in place), plus brand-new bullets for learnings that
+    match nothing existing (appended into the marker block).
+    """
+
+    edits: list[TextEdit] = field(default_factory=list)
+    new_bullets: list[SynthesizedBullet] = field(default_factory=list)
+
+
+@dataclass
 class DirGroup:
     """All learnings whose `File` column falls directly under `path`."""
 
@@ -43,7 +68,12 @@ class DirGroup:
 
     # Filled in by the synthesis step.
     bullets: list[SynthesizedBullet] = field(default_factory=list)
-    mode_used: str = ""  # "llm" or "heuristic"
+    mode_used: str = ""  # "llm", "llm-merge", or "heuristic"
+
+    # Filled in only by the LLM "merge into existing AGENTS.md" path (see
+    # synthesize.py / writer.apply_merge_plan); when set, this is the final,
+    # ready-to-write file content and `bullets` is left empty.
+    merged_content: str | None = None
 
     @property
     def display_path(self) -> str:

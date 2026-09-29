@@ -11,7 +11,7 @@ import logging
 import re
 
 from learnings2agents.config import DEFAULT_GEMINI_MODEL, DEFAULT_GEMINI_MODEL_CHAIN
-from learnings2agents.models import Learning, SynthesizedBullet
+from learnings2agents.models import Learning, MergePlan, SynthesizedBullet, TextEdit
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,66 @@ def _build_prompt(directory: str, learnings: list[Learning]) -> str:
         lines.append(f"{i}. {learning.text}")
     lines.append("")
     lines.append("Produce the JSON array now.")
+    return "\n".join(lines)
+
+
+_MERGE_SYSTEM_PROMPT = """\
+You are updating an existing AGENTS.md file for one directory of a code \
+repository, given new "learnings" recorded by the CodeRabbit code review \
+tool. You will be given the CURRENT FULL CONTENT of that directory's \
+AGENTS.md file (it may contain hand-written prose, and/or a machine- \
+generated block delimited by the exact marker lines \
+`<!-- BEGIN CODERABBIT LEARNINGS -->` and `<!-- END CODERABBIT LEARNINGS -->`), \
+plus a numbered list of new learnings, each tagged with its PR reference.
+
+For each new learning:
+- If the file ALREADY expresses an equivalent, overlapping, or more-specific- \
+instance-of rule anywhere in the file (inside or outside the marker block), \
+propose ONE edit that rewrites that existing snippet in place to incorporate \
+the new learning, instead of creating a duplicate elsewhere. `old_text` MUST \
+be an EXACT, VERBATIM substring copied character-for-character from the \
+CURRENT FULL CONTENT above (do not paraphrase or reformat it) — keep it as \
+short as possible, ideally just the one bullet/line being changed, so it can \
+be located unambiguously. If the existing snippet already ends with a PR \
+reference like `(PR #100)` or `(PRs #100, #101)`, extend it with the new \
+learning's PR number(s) rather than dropping the existing one(s).
+- If a learning does not match anything already in the file, add it to \
+"new_bullets" instead (it will be appended into the marker block for you; do \
+not try to place it in the file content yourself).
+- Never propose an edit that deletes or shortens existing information \
+without replacing it with equivalent-or-richer guidance.
+
+Respond with ONLY a JSON object (no surrounding prose, no markdown fences) \
+of the form:
+  {"edits": [{"old_text": "<exact existing snippet>", \
+"new_text": "<rewritten replacement>"}], \
+"new_bullets": [{"text": "<bullet text>", \
+"heading": "<optional heading or empty string>", \
+"sources": [<1-based numbers of the input learnings this bullet came from>]}]}
+Either list may be empty. Do not include both an edit and a new_bullets entry \
+for the same learning.
+"""
+
+
+def _build_merge_prompt(
+    directory: str, learnings: list[Learning], existing_content: str
+) -> str:
+    lines = [
+        f"Directory: {directory or '(repository root)'}",
+        "",
+        "=== CURRENT FULL AGENTS.md CONTENT ===",
+        existing_content,
+        "=== END CURRENT FULL AGENTS.md CONTENT ===",
+        "",
+        "New numbered learnings:",
+    ]
+    for i, learning in enumerate(learnings, start=1):
+        pr_note = (
+            f"[PR #{learning.pull_request}]" if learning.pull_request else "[no PR]"
+        )
+        lines.append(f"{i}. {pr_note} {learning.text}")
+    lines.append("")
+    lines.append("Produce the JSON patch object now.")
     return "\n".join(lines)
 
 
@@ -208,3 +268,98 @@ class GeminiClient:
                 f"Gemini returned no usable bullets for directory '{directory or '(root)'}'."
             )
         return bullets
+
+    def plan_agents_md_merge(
+        self, directory: str, learnings: list[Learning], existing_content: str
+    ) -> MergePlan:
+        """Ask Gemini for a small patch that folds `learnings` into an
+        existing AGENTS.md file's `existing_content`, instead of regenerating
+        the whole file.
+
+        Returns a `MergePlan` (possibly with empty `edits`/`new_bullets` if
+        the model found nothing to change — that's a valid outcome, not an
+        error). Raises `LlmSynthesisError` on any API failure or unparsable/
+        malformed top-level response; callers should catch it and fall back
+        to the marker-only bullets-based synthesis path for that directory.
+        """
+        client = self._get_client()
+        prompt = _build_merge_prompt(directory, learnings, existing_content)
+
+        try:
+            response = client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config={
+                    "system_instruction": _MERGE_SYSTEM_PROMPT,
+                    "temperature": 0.2,
+                    "response_mime_type": "application/json",
+                },
+            )
+        except Exception as exc:  # network/auth/quota errors, etc.
+            raise LlmSynthesisError(
+                f"Gemini merge-plan call failed for directory "
+                f"'{directory or '(root)'}': {exc}"
+            ) from exc
+
+        raw_text = getattr(response, "text", None) or ""
+        try:
+            payload = json.loads(_extract_json(raw_text))
+        except json.JSONDecodeError as exc:
+            raise LlmSynthesisError(
+                f"Could not parse Gemini merge-plan JSON output for directory "
+                f"'{directory or '(root)'}': {exc}. Raw output: {raw_text[:500]!r}"
+            ) from exc
+
+        if not isinstance(payload, dict):
+            raise LlmSynthesisError(
+                f"Gemini merge-plan output for directory '{directory or '(root)'}' "
+                f"was not a JSON object: {raw_text[:500]!r}"
+            )
+
+        edits: list[TextEdit] = []
+        for item in payload.get("edits") or []:
+            if not isinstance(item, dict):
+                continue
+            old_text = str(item.get("old_text", ""))
+            new_text = str(item.get("new_text", ""))
+            if not old_text or not new_text or old_text == new_text:
+                logger.debug(
+                    "Dropping malformed/no-op merge edit for directory '%s': %r",
+                    directory or "(root)",
+                    item,
+                )
+                continue
+            edits.append(TextEdit(old_text=old_text, new_text=new_text))
+
+        all_prs = _unique_pull_requests(learnings)
+        new_bullets: list[SynthesizedBullet] = []
+        for item in payload.get("new_bullets") or []:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text", "")).strip()
+            if not text:
+                continue
+            heading = str(item.get("heading") or "").strip()
+
+            source_indices = item.get("sources") or []
+            prs: list[str] = []
+            for idx in source_indices:
+                try:
+                    learning = learnings[int(idx) - 1]
+                except (TypeError, ValueError, IndexError):
+                    continue
+                if learning.pull_request and learning.pull_request not in prs:
+                    prs.append(learning.pull_request)
+            if not prs:
+                # Model omitted/garbled sources; fall back to attributing every
+                # PR in this run rather than losing attribution entirely (same
+                # fallback as synthesize_directory — these are always
+                # brand-new bullets with no existing counterpart to inherit
+                # attribution from).
+                prs = all_prs
+
+            new_bullets.append(
+                SynthesizedBullet(text=text, pull_requests=prs, heading=heading)
+            )
+
+        return MergePlan(edits=edits, new_bullets=new_bullets)

@@ -219,22 +219,28 @@ def main(argv: list[str] | None = None) -> int:
         )
         cache = SynthesisCache(cache_dir)
 
-    synthesize_all(groups, gemini_client, cache=cache)
+    synthesize_all(groups, gemini_client, cache=cache, target=target_path)
 
     results = write_all(groups, target_path, dry_run=args.dry_run)
 
     for group, result in zip(groups, results):
+        # Merged directories have no structured bullet list (the LLM's
+        # merge-plan patch was applied directly to the existing file), so
+        # "bullets=N" would be misleading there.
+        bullets_display = (
+            "n/a" if group.merged_content is not None else str(len(group.bullets))
+        )
         logger.info(
-            "%-45s bullets=%-3d mode=%-9s -> %s (%s)",
+            "%-45s bullets=%-3s mode=%-9s -> %s (%s)",
             group.display_path,
-            len(group.bullets),
+            bullets_display,
             group.mode_used or "n/a",
             result.path,
             result.action,
         )
 
     created = sum(1 for r in results if r.action == "created")
-    updated = sum(1 for r in results if r.action == "updated")
+    updated = sum(1 for r in results if r.action in ("updated", "merged"))
     skipped = sum(1 for r in results if r.action == "skipped-empty")
 
     if args.dry_run:

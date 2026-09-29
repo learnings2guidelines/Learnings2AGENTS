@@ -3,6 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from learnings2agents.cli import main
+from learnings2agents.config import BEGIN_MARKER
+from learnings2agents.llm import GeminiClient
+from learnings2agents.models import MergePlan, SynthesizedBullet, TextEdit
+from learnings2agents.writer import render_section
 
 FIXTURE_CSV = Path(__file__).parent / "fixtures" / "sample_learnings.csv"
 
@@ -92,3 +96,79 @@ def test_cli_missing_csv_file_returns_error(tmp_path):
     target.mkdir()
     exit_code = main(["--csv", str(tmp_path / "nope.csv"), "--target", str(target)])
     assert exit_code == 1
+
+
+def test_cli_merges_new_learnings_into_existing_agents_md(tmp_path, monkeypatch):
+    """End-to-end: when --gemini-api-key is set and a directory's AGENTS.md
+    already exists, the CLI should apply the LLM's merge plan (edit for a
+    matching rule + a brand-new bullet) directly into that file, preserving
+    hand-written content and the previously-existing bullet, instead of
+    discarding them.
+    """
+    target = _make_target_repo(tmp_path)
+
+    existing_bullets = [SynthesizedBullet(text="Old rule.", pull_requests=["1"])]
+    existing_content = (
+        "# AGENTS.md\n\nHand-written intro.\n\n"
+        + render_section(existing_bullets)
+        + "\n"
+    )
+    agents_path = target / "utilities" / "AGENTS.md"
+    agents_path.write_text(existing_content, encoding="utf-8")
+
+    def _fake_plan_merge(self, directory, learnings, existing_content):
+        return MergePlan(
+            edits=[
+                TextEdit(
+                    old_text="- Old rule. (PR #1)",
+                    new_text="- Old rule, refined. (PR #1)",
+                )
+            ],
+            new_bullets=[
+                SynthesizedBullet(text="A brand-new rule.", pull_requests=["999"])
+            ],
+        )
+
+    def _fake_synthesize_directory(self, directory, learnings):
+        # Used for directories that don't already have an AGENTS.md (e.g.
+        # the repo root, and utilities/unittests in this fixture).
+        return [
+            SynthesizedBullet(
+                text=f"Bullet for {directory or 'root'}.", pull_requests=["1"]
+            )
+        ]
+
+    monkeypatch.setattr(GeminiClient, "plan_agents_md_merge", _fake_plan_merge)
+    monkeypatch.setattr(
+        GeminiClient, "synthesize_directory", _fake_synthesize_directory
+    )
+
+    exit_code = main(
+        [
+            "--csv",
+            str(FIXTURE_CSV),
+            "--target",
+            str(target),
+            "--gemini-api-key",
+            "fake-key",
+            "--model",
+            "fake-model",
+            "--no-cache",
+        ]
+    )
+
+    assert exit_code == 0
+
+    merged = agents_path.read_text(encoding="utf-8")
+    assert "Hand-written intro." in merged
+    assert "Old rule, refined." in merged
+    assert "Old rule. (PR #1)" not in merged
+    assert "A brand-new rule." in merged
+    # The edit + new bullet were folded into the single existing marker
+    # block, not appended as a second, duplicate block.
+    assert merged.count(BEGIN_MARKER) == 1
+
+    # A directory with no pre-existing AGENTS.md uses the regular
+    # synthesize-from-scratch path instead.
+    root_content = (target / "AGENTS.md").read_text(encoding="utf-8")
+    assert "Bullet for root." in root_content

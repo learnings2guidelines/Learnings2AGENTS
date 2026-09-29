@@ -12,7 +12,7 @@ import json
 import logging
 from pathlib import Path
 
-from learnings2agents.models import Learning, SynthesizedBullet
+from learnings2agents.models import Learning, MergePlan, SynthesizedBullet, TextEdit
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,28 @@ def _cache_key(path: str, learnings: list[Learning], mode: str, model: str) -> s
         "path": path,
         "mode": mode,
         "model": model if mode == "llm" else "",
+        "texts": sorted(f"{learning.file}::{learning.text}" for learning in learnings),
+    }
+    blob = json.dumps(payload, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
+
+def _merge_cache_key(
+    path: str, learnings: list[Learning], existing_content: str, model: str
+) -> str:
+    """Cache key for the "merge into existing AGENTS.md" path.
+
+    Unlike `_cache_key`, this also hashes `existing_content` since the merge
+    result depends on the file's current text, not just the learnings set —
+    a hand-edit or a previous run's write must invalidate the cache entry.
+    """
+    payload = {
+        "path": path,
+        "mode": "llm-merge",
+        "model": model,
+        "existing_content_hash": hashlib.sha256(
+            existing_content.encode("utf-8")
+        ).hexdigest(),
         "texts": sorted(f"{learning.file}::{learning.text}" for learning in learnings),
     }
     blob = json.dumps(payload, sort_keys=True).encode("utf-8")
@@ -76,3 +98,65 @@ class SynthesisCache:
             self._path_for(key).write_text(json.dumps(data, indent=2), encoding="utf-8")
         except OSError as exc:
             logger.debug("Could not write cache entry: %s", exc)
+
+    def get_merge_plan(
+        self,
+        path: str,
+        learnings: list[Learning],
+        existing_content: str,
+        model: str,
+    ) -> MergePlan | None:
+        """Cache lookup for the "merge into existing AGENTS.md" path."""
+        key = _merge_cache_key(path, learnings, existing_content, model)
+        cache_file = self._path_for(key)
+        if not cache_file.is_file():
+            return None
+        try:
+            data = json.loads(cache_file.read_text(encoding="utf-8"))
+            edits = [
+                TextEdit(old_text=item["old_text"], new_text=item["new_text"])
+                for item in data.get("edits", [])
+            ]
+            new_bullets = [
+                SynthesizedBullet(
+                    text=item["text"],
+                    pull_requests=list(item.get("pull_requests", [])),
+                    heading=item.get("heading", ""),
+                )
+                for item in data.get("new_bullets", [])
+            ]
+            return MergePlan(edits=edits, new_bullets=new_bullets)
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            logger.debug(
+                "Ignoring unreadable merge-plan cache entry %s: %s", cache_file, exc
+            )
+            return None
+
+    def set_merge_plan(
+        self,
+        path: str,
+        learnings: list[Learning],
+        existing_content: str,
+        model: str,
+        plan: MergePlan,
+    ) -> None:
+        """Cache write for the "merge into existing AGENTS.md" path."""
+        key = _merge_cache_key(path, learnings, existing_content, model)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        data = {
+            "edits": [
+                {"old_text": e.old_text, "new_text": e.new_text} for e in plan.edits
+            ],
+            "new_bullets": [
+                {
+                    "text": b.text,
+                    "pull_requests": b.pull_requests,
+                    "heading": b.heading,
+                }
+                for b in plan.new_bullets
+            ],
+        }
+        try:
+            self._path_for(key).write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except OSError as exc:
+            logger.debug("Could not write merge-plan cache entry: %s", exc)

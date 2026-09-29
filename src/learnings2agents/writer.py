@@ -5,11 +5,12 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from learnings2agents.config import AGENTS_FILENAME, BEGIN_MARKER, END_MARKER
-from learnings2agents.models import DirGroup, SynthesizedBullet
+from learnings2agents.models import DirGroup, MergePlan, SynthesizedBullet
 
 logger = logging.getLogger(__name__)
 
@@ -83,10 +84,94 @@ def merge_into_existing(existing_content: str, generated_section: str) -> str:
     return existing + "\n\n" + generated_section + "\n"
 
 
+_HEADING_LINE_RE = re.compile(r"^### (.+)$")
+_BULLET_LINE_RE = re.compile(
+    r"^- (?P<text>.*?)(?: \((?:PR|PRs) (?P<prs>#\S+(?:, #\S+)*)\))?$"
+)
+
+
+def parse_generated_bullets(content: str) -> list[SynthesizedBullet]:
+    """Find the BEGIN/END marker section in `content` and parse the bullets
+    between them back into `SynthesizedBullet`s (the inverse of
+    `render_bullets`/`render_section`, so it round-trips exactly).
+
+    Returns `[]` if `content` has no well-formed marker section (missing
+    markers, or END before BEGIN).
+    """
+    begin_idx = content.find(BEGIN_MARKER)
+    end_idx = content.find(END_MARKER)
+    if begin_idx == -1 or end_idx == -1 or end_idx <= begin_idx:
+        return []
+
+    section = content[begin_idx + len(BEGIN_MARKER) : end_idx]
+
+    bullets: list[SynthesizedBullet] = []
+    heading = ""
+    for raw_line in section.splitlines():
+        line = raw_line.strip()
+        if not line or line == _SECTION_TITLE:
+            continue
+
+        heading_match = _HEADING_LINE_RE.match(line)
+        if heading_match:
+            heading = heading_match.group(1).strip()
+            continue
+
+        bullet_match = _BULLET_LINE_RE.match(line)
+        if not bullet_match:
+            continue
+        text = bullet_match.group("text").strip()
+        if not text:
+            continue
+        prs_raw = bullet_match.group("prs")
+        pull_requests = (
+            [pr.strip().lstrip("#") for pr in prs_raw.split(",")] if prs_raw else []
+        )
+        bullets.append(
+            SynthesizedBullet(text=text, pull_requests=pull_requests, heading=heading)
+        )
+
+    return bullets
+
+
+def apply_merge_plan(existing_content: str, plan: MergePlan) -> str:
+    """Apply an LLM-proposed `MergePlan` to `existing_content`.
+
+    First applies `plan.edits` as exact string replacements anywhere in the
+    file (matched rules, whether hand-written or previously generated, are
+    rewritten in place). An edit whose `old_text` isn't found exactly once in
+    the current content (not found at all, or ambiguous/multiple matches) is
+    skipped with a warning rather than applied incorrectly — this keeps a
+    single bad match from corrupting the file or failing the whole directory.
+
+    Then appends `plan.new_bullets` into the marker block, first folding in
+    whatever bullets are *already* in that block (via `parse_generated_bullets`)
+    so previously-accumulated bullets are never dropped, only added to.
+    """
+    content = existing_content
+    for edit in plan.edits:
+        count = content.count(edit.old_text)
+        if count != 1:
+            logger.warning(
+                "Skipping merge edit: old_text matched %d time(s) (expected "
+                "exactly 1): %r",
+                count,
+                edit.old_text[:120],
+            )
+            continue
+        content = content.replace(edit.old_text, edit.new_text, 1)
+
+    if plan.new_bullets:
+        combined = parse_generated_bullets(content) + plan.new_bullets
+        content = merge_into_existing(content, render_section(combined))
+
+    return content
+
+
 @dataclass
 class WriteResult:
     path: Path
-    action: str  # "created" | "updated" | "skipped-empty" | "dry-run"
+    action: str  # "created" | "updated" | "merged" | "skipped-empty" | "dry-run-*"
 
 
 def write_agents_md(
@@ -94,6 +179,17 @@ def write_agents_md(
 ) -> WriteResult:
     """Write/merge the AGENTS.md file for one directory's synthesized bullets."""
     agents_path = target_dir / AGENTS_FILENAME
+
+    if group.merged_content is not None:
+        # Final content already computed by the LLM merge-plan path (see
+        # synthesize.py + apply_merge_plan) — write it verbatim instead of
+        # rendering `group.bullets` (which is left empty for this path).
+        if dry_run:
+            return WriteResult(path=agents_path, action="dry-run-merged")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        agents_path.write_text(group.merged_content, encoding="utf-8")
+        logger.info("merged %s", agents_path)
+        return WriteResult(path=agents_path, action="merged")
 
     if not group.bullets:
         return WriteResult(path=agents_path, action="skipped-empty")

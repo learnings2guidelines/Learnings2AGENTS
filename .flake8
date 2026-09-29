@@ -7,12 +7,14 @@ jobs = 0
 # Handled by ruff (suppressed in flake8 to avoid duplicate enforcement):
 #   E501 — line too long; ruff formatter manages line length
 #   E201 — whitespace after '('; ruff formatter manages whitespace
+#   E203 — whitespace before ':'; ruff formatter adds it around slice colons
+#          per PEP 8 (e.g. `x[a + b : c]`), the same black/flake8 conflict
 #   W503 — line break before binary operator; PEP 8 reversed this, ruff uses W504 (after)
 #
 # Suppressed in flake8 only (enforced by ruff via extend-select + per-line # noqa):
 #   N802 — function name should be lowercase; reserved for method overrides
 #   N815 — mixedCaseClassAttribute; can be suppressed per-line with # noqa: N815
-ignore = E501, E201, W503, N802, N815
+ignore = E501, E201, E203, W503, N802, N815
 
 exclude =
     .tox,
