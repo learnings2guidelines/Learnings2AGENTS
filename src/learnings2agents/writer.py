@@ -200,21 +200,21 @@ class WriteResult:
 
 
 def write_agents_md(
-    target_dir: Path,
-    group: DirGroup,
-    dry_run: bool = False,
-    omit_markers: bool = False,
+    target_dir: Path, group: DirGroup, dry_run: bool = False
 ) -> WriteResult:
     """Write/merge the AGENTS.md file for one directory's synthesized bullets.
 
-    `omit_markers` drops the `<!-- BEGIN/END CODERABBIT LEARNINGS -->`
-    wrapper from the generated section (see `render_section`). It's only
-    meaningful when a *new* file is being created from scratch — the target
-    repository had no `AGENTS.md` files at all before this run, so there's
-    no previous machine-generated block to preserve/re-find. It's ignored
-    when merging into an already-existing file (that file predates this
-    run, so `omit_markers` can't be true for it in practice; see
-    `cli.target_has_any_agents_md`).
+    Whether the generated section includes the
+    `<!-- BEGIN/END CODERABBIT LEARNINGS -->` markers is decided per file,
+    based on whether *that specific directory's* `AGENTS.md` already exists:
+    - **Creating** a brand-new file (nothing there yet) omits the markers —
+      there's no previous machine-generated block to preserve/re-find yet,
+      so they'd just be noise in a file that's 100% generated content.
+    - **Updating** an already-existing file (found at least one file there)
+      includes them as before, so a *future* run can find and replace just
+      the generated section while preserving everything else untouched.
+    This is independent of whether other directories in the same run (or
+    repository) already have an `AGENTS.md` or not.
     """
     agents_path = target_dir / AGENTS_FILENAME
 
@@ -222,6 +222,10 @@ def write_agents_md(
         # Final content already computed by the LLM merge-plan path (see
         # synthesize.py + apply_merge_plan) — write it verbatim instead of
         # rendering `group.bullets` (which is left empty for this path).
+        # This path is only ever taken for a directory whose AGENTS.md
+        # already existed (that's the whole premise of a "merge plan"), so
+        # it always includes markers (via apply_merge_plan/render_section's
+        # default) — consistent with the "updating" case above.
         if dry_run:
             return WriteResult(path=agents_path, action="dry-run-merged")
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -232,9 +236,10 @@ def write_agents_md(
     if not group.bullets:
         return WriteResult(path=agents_path, action="skipped-empty")
 
-    generated_section = render_section(group.bullets, include_markers=not omit_markers)
+    file_exists = agents_path.is_file()
+    generated_section = render_section(group.bullets, include_markers=file_exists)
 
-    if agents_path.is_file():
+    if file_exists:
         existing_content = agents_path.read_text(encoding="utf-8")
         new_content = merge_into_existing(existing_content, generated_section)
         action = "updated"
@@ -252,17 +257,12 @@ def write_agents_md(
 
 
 def write_all(
-    groups: list[DirGroup],
-    target: Path | str,
-    dry_run: bool = False,
-    omit_markers: bool = False,
+    groups: list[DirGroup], target: Path | str, dry_run: bool = False
 ) -> list[WriteResult]:
     """Write/merge AGENTS.md for every group with a non-empty bullet list."""
     target_path = Path(target)
     results = []
     for group in groups:
         dir_path = target_path / group.path if group.path else target_path
-        results.append(
-            write_agents_md(dir_path, group, dry_run=dry_run, omit_markers=omit_markers)
-        )
+        results.append(write_agents_md(dir_path, group, dry_run=dry_run))
     return results

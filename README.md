@@ -76,16 +76,19 @@ python -m learnings2agents.cli --help
 4. For each directory, synthesizes a deduplicated, imperative-style bullet
    list — either via the Gemini API (if a key is given) or a fully offline
    heuristic (near-duplicate text clustering via `difflib`).
-5. Writes/merges an `AGENTS.md` per directory, wrapping generated content in
-   `<!-- BEGIN/END CODERABBIT LEARNINGS -->` markers so any hand-written
-   content in an existing `AGENTS.md` is preserved across re-runs. If a
-   Gemini key is given **and** that directory's `AGENTS.md` already exists,
-   step 4 is skipped in favor of a patch-based merge into the existing file
+5. Writes/merges an `AGENTS.md` per directory. **Creating** a directory's
+   file from scratch (it didn't exist before this run) writes plain
+   generated content with no extra markers — it's 100% generated, so
+   there's nothing to distinguish yet. **Updating** an already-existing
+   file wraps the new content in `<!-- BEGIN/END CODERABBIT LEARNINGS -->`
+   markers instead, so any hand-written content in that file is preserved
+   and a *future* run can find/replace just the generated section. This is
+   decided independently per directory — one directory being created fresh
+   doesn't affect whether a sibling directory's pre-existing file gets
+   markers. If a Gemini key is given **and** that directory's `AGENTS.md`
+   already exists, step 4 is skipped in favor of a patch-based merge into
+   the existing file instead
    — see [`## What does a Gemini API key add?`](#what-does-a-gemini-api-key-add).
-   **Exception:** if the target had **no** `AGENTS.md` files at all before
-   this run, the markers are omitted from newly-written files — there's no
-   previous machine-generated section to re-find on a future run yet, so
-   they'd just be noise in a brand-new file.
 
 Results are cached (`<target>/.learnings2agents_cache/` by default, disable
 with `--no-cache`) so re-running against an unchanged CSV/target skips
@@ -286,8 +289,10 @@ src/learnings2agents/
   writer.py            # render Markdown, merge into existing AGENTS.md files;
                         # apply_merge_plan() applies an LLM merge plan's edits +
                         # new bullets onto an existing file's full content;
-                        # omit_markers= drops the CODERABBIT LEARNINGS markers
-                        # for a target that had no AGENTS.md files before
+                        # write_agents_md() omits the CODERABBIT LEARNINGS
+                        # markers when creating a directory's file from
+                        # scratch, and includes them when updating one that
+                        # already existed
   cache.py             # on-disk content-hash cache for synthesis results and
                         # merge plans (the latter also keyed on file content)
 tests/

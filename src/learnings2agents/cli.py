@@ -152,17 +152,17 @@ def main(argv: list[str] | None = None) -> int:
 
     # Checked once, up front, before anything is written: did this target
     # repository already have at least one AGENTS.md file before this run?
-    # If not, newly-created files skip the <!-- BEGIN/END CODERABBIT
-    # LEARNINGS --> markers (nothing to re-find on a future run yet), and —
-    # when a Gemini key is also available — the tool attempts to
+    # If NOT, a Gemini key being available makes the tool attempt to
     # consolidate everything into a single root AGENTS.md instead of the
     # usual one-file-per-directory split (see `target_has_any_agents_md`).
+    # (Whether an individual file's generated section includes the
+    # CODERABBIT LEARNINGS markers is a separate, per-file decision made in
+    # writer.write_agents_md — it only omits them for a directory whose own
+    # AGENTS.md doesn't exist yet, regardless of this repo-wide check.)
     repo_had_no_agents_md = not target_has_any_agents_md(target_path)
     if repo_had_no_agents_md:
         logger.info(
-            "No existing AGENTS.md found anywhere under target %s: generated "
-            "sections will omit the CODERABBIT LEARNINGS markers.",
-            target_path,
+            "No existing AGENTS.md found anywhere under target %s.", target_path
         )
 
     try:
@@ -263,9 +263,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             root_group = DirGroup(path="", bullets=root_bullets)
-            result = write_agents_md(
-                target_path, root_group, dry_run=args.dry_run, omit_markers=True
-            )
+            result = write_agents_md(target_path, root_group, dry_run=args.dry_run)
             logger.info(
                 "%-45s bullets=%-3d mode=%-9s -> %s (%s)",
                 root_group.display_path,
@@ -292,9 +290,7 @@ def main(argv: list[str] | None = None) -> int:
 
     synthesize_all(groups, gemini_client, cache=cache, target=target_path)
 
-    results = write_all(
-        groups, target_path, dry_run=args.dry_run, omit_markers=repo_had_no_agents_md
-    )
+    results = write_all(groups, target_path, dry_run=args.dry_run)
 
     for group, result in zip(groups, results):
         # Merged directories have no structured bullet list (the LLM's

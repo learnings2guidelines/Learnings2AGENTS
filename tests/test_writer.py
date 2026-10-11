@@ -77,22 +77,14 @@ def test_merge_into_existing_appends_when_no_markers_present():
     assert merged.index("Hand-written content only.") < merged.index("new content")
 
 
-def test_write_agents_md_creates_new_file(tmp_path):
+def test_write_agents_md_creates_new_file_without_markers(tmp_path):
+    """A brand-new file (nothing there yet for this directory) is 100%
+    generated content, so it omits the CODERABBIT LEARNINGS markers —
+    there's no previous machine-generated block to preserve/re-find yet."""
     group = DirGroup(
         path="utilities", bullets=[SynthesizedBullet(text="Do X.", pull_requests=["1"])]
     )
     result = write_agents_md(tmp_path, group)
-    assert result.action == "created"
-    content = result.path.read_text(encoding="utf-8")
-    assert "Do X." in content
-    assert BEGIN_MARKER in content
-
-
-def test_write_agents_md_omits_markers_for_a_brand_new_file(tmp_path):
-    group = DirGroup(
-        path="utilities", bullets=[SynthesizedBullet(text="Do X.", pull_requests=["1"])]
-    )
-    result = write_agents_md(tmp_path, group, omit_markers=True)
     assert result.action == "created"
     content = result.path.read_text(encoding="utf-8")
     assert "Do X." in content
@@ -108,6 +100,9 @@ def test_write_agents_md_skips_when_no_bullets(tmp_path):
 
 
 def test_write_agents_md_preserves_hand_written_content_on_update(tmp_path):
+    """Unlike a brand-new file, updating a directory's already-existing
+    AGENTS.md still wraps the new section in the CODERABBIT LEARNINGS
+    markers, so a future run can find and replace just that section."""
     agents_path = tmp_path / "AGENTS.md"
     agents_path.write_text("# AGENTS.md\n\nManually written notes.\n", encoding="utf-8")
 
@@ -120,6 +115,8 @@ def test_write_agents_md_preserves_hand_written_content_on_update(tmp_path):
     content = agents_path.read_text(encoding="utf-8")
     assert "Manually written notes." in content
     assert "Do X." in content
+    assert BEGIN_MARKER in content
+    assert END_MARKER in content
 
 
 def test_write_agents_md_dry_run_does_not_touch_disk(tmp_path):
@@ -306,8 +303,15 @@ def test_write_all_writes_into_correct_subdirectories(tmp_path):
     assert all(r.action == "created" for r in results)
 
 
-def test_write_all_omits_markers_for_every_group_when_requested(tmp_path):
+def test_write_all_omits_markers_only_for_brand_new_files(tmp_path):
+    """Markers are decided per directory, independent of other directories
+    in the same run: a pre-existing file still gets markers on update, while
+    a sibling directory being created fresh in the same run does not."""
     (tmp_path / "utilities").mkdir()
+    (tmp_path / "AGENTS.md").write_text(
+        "# AGENTS.md\n\nPre-existing.\n", encoding="utf-8"
+    )
+
     groups = [
         DirGroup(
             path="", bullets=[SynthesizedBullet(text="Root rule.", pull_requests=["1"])]
@@ -317,12 +321,13 @@ def test_write_all_omits_markers_for_every_group_when_requested(tmp_path):
             bullets=[SynthesizedBullet(text="Utils rule.", pull_requests=["2"])],
         ),
     ]
-    write_all(groups, tmp_path, omit_markers=True)
+    write_all(groups, tmp_path)
 
-    for rel in ["AGENTS.md", "utilities/AGENTS.md"]:
-        content = (tmp_path / rel).read_text(encoding="utf-8")
-        assert BEGIN_MARKER not in content
-        assert END_MARKER not in content
+    root_content = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    assert BEGIN_MARKER in root_content  # pre-existing -> updated -> markers
+
+    utils_content = (tmp_path / "utilities" / "AGENTS.md").read_text(encoding="utf-8")
+    assert BEGIN_MARKER not in utils_content  # brand-new -> created -> no markers
 
 
 def test_apply_edits_applies_a_clean_edit():

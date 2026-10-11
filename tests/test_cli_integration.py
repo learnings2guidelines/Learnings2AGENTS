@@ -46,21 +46,23 @@ def test_cli_end_to_end_heuristic_mode_writes_expected_agents_md(tmp_path):
     content = (target / "utilities" / "unittests" / "AGENTS.md").read_text(
         encoding="utf-8"
     )
-    # `target` had no AGENTS.md files at all before this run, so the
-    # generated section omits the CODERABBIT LEARNINGS markers (see
-    # `tree.target_has_any_agents_md`) — there's no previous
-    # machine-generated block that a future run would need to re-find.
+    # This directory had no AGENTS.md before this run, so the file is
+    # created from scratch and the generated section omits the CODERABBIT
+    # LEARNINGS markers — there's no previous machine-generated block that
+    # a future run would need to re-find yet (see `writer.write_agents_md`).
     assert "<!-- BEGIN CODERABBIT LEARNINGS -->" not in content
     assert "<!-- END CODERABBIT LEARNINGS -->" not in content
     assert "## Learnings from CodeRabbit" in content
 
 
-def test_cli_includes_markers_when_target_already_has_an_agents_md(tmp_path):
-    """Once a target repository has used this tool (or AGENTS.md) at all,
-    newly-created files go back to including the markers normally."""
+def test_cli_markers_are_decided_per_directory_not_for_the_whole_repo(tmp_path):
+    """Whether a file's generated section gets the CODERABBIT LEARNINGS
+    markers depends on whether *that directory's* AGENTS.md already
+    existed — not on whether some other directory in the repository
+    happens to have one."""
     target = _make_target_repo(tmp_path)
-    # A single pre-existing AGENTS.md anywhere under target is enough to mark
-    # this repository as "not fresh" for every directory in this run.
+    # Pre-exists only at the root; every other directory in this run is
+    # still a brand-new file.
     (target / "AGENTS.md").write_text(
         "# AGENTS.md\n\nPre-existing.\n", encoding="utf-8"
     )
@@ -77,11 +79,14 @@ def test_cli_includes_markers_when_target_already_has_an_agents_md(tmp_path):
 
     assert exit_code == 0
 
-    content = (target / "utilities" / "unittests" / "AGENTS.md").read_text(
+    root_content = (target / "AGENTS.md").read_text(encoding="utf-8")
+    assert "<!-- BEGIN CODERABBIT LEARNINGS -->" in root_content
+    assert "Pre-existing." in root_content
+
+    utilities_content = (target / "utilities" / "unittests" / "AGENTS.md").read_text(
         encoding="utf-8"
     )
-    assert "<!-- BEGIN CODERABBIT LEARNINGS -->" in content
-    assert "<!-- END CODERABBIT LEARNINGS -->" in content
+    assert "<!-- BEGIN CODERABBIT LEARNINGS -->" not in utilities_content
 
 
 def test_cli_dry_run_does_not_write_files(tmp_path):
