@@ -13,6 +13,7 @@ from pathlib import Path
 
 from learnings2agents.cli import build_arg_parser, main
 from learnings2agents.llm import GeminiClient, LlmSynthesisError
+from learnings2agents.models import MergePlan, SynthesizedBullet
 
 SENTINEL_KEY = "SENTINEL-SECRET-VALUE-should-never-appear-9f3c7a"
 
@@ -71,6 +72,121 @@ def test_cli_run_never_logs_or_prints_the_api_key(
     assert "heuristic" in captured.err or any(
         "heuristic" in record.getMessage() for record in caplog.records
     )
+
+
+def test_cli_merge_plan_and_dedupe_paths_never_log_or_print_the_api_key(
+    tmp_path, monkeypatch, caplog, capsys
+):
+    """Covers the two newer LLM-mode code paths (merge-plan-into-existing-
+    file, and the redundancy/dedupe re-check) that `test_cli_run_never_...`
+    above doesn't exercise, since that test only triggers the regular
+    from-scratch synthesis fallback."""
+    target = _make_target_repo(tmp_path)
+    # Give "utilities" a pre-existing AGENTS.md so the merge-plan path (not
+    # the regular from-scratch path) is used for it.
+    (target / "utilities" / "AGENTS.md").write_text(
+        "# AGENTS.md\n\n- Existing rule.\n", encoding="utf-8"
+    )
+
+    def _fake_plan_merge(self, directory, learnings, existing_content):
+        return MergePlan(new_bullets=[SynthesizedBullet(text="A new rule.")])
+
+    def _fake_synthesize_directory(self, directory, learnings):
+        return [SynthesizedBullet(text=f"Bullet for {directory or 'root'}.")]
+
+    def _dedupe_boom(self, directory, existing_content, bullets):
+        # Deliberately does not reference `self.api_key`, exactly like the
+        # `synthesize_directory` mock above — a real (misbehaving) API
+        # error should never do so either.
+        raise LlmSynthesisError("simulated dedupe failure for test purposes")
+
+    monkeypatch.setattr(GeminiClient, "plan_agents_md_merge", _fake_plan_merge)
+    monkeypatch.setattr(
+        GeminiClient, "synthesize_directory", _fake_synthesize_directory
+    )
+    monkeypatch.setattr(GeminiClient, "dedupe_bullets", _dedupe_boom)
+
+    with caplog.at_level(logging.DEBUG):
+        exit_code = main(
+            [
+                "--csv",
+                str(FIXTURE_CSV),
+                "--target",
+                str(target),
+                "--gemini-api-key",
+                SENTINEL_KEY,
+                "--model",
+                "fake-model",
+                "--no-cache",
+                "-v",
+            ]
+        )
+
+    assert exit_code == 0
+
+    captured = capsys.readouterr()
+    assert SENTINEL_KEY not in captured.out
+    assert SENTINEL_KEY not in captured.err
+    assert all(SENTINEL_KEY not in record.getMessage() for record in caplog.records)
+
+
+def test_cli_root_consolidation_path_never_logs_or_prints_the_api_key(
+    tmp_path, monkeypatch, caplog, capsys
+):
+    """Covers the single-root-AGENTS.md consolidation path (fresh target +
+    Gemini key), including a failure in the consolidation call itself and
+    in the final dedupe re-check, both of which fall back/continue rather
+    than aborting — neither should ever surface the key either."""
+    target = _make_target_repo(tmp_path)
+
+    def _root_boom(self, groups):
+        raise LlmSynthesisError("simulated root-consolidation failure")
+
+    monkeypatch.setattr(GeminiClient, "synthesize_root", _root_boom)
+
+    with caplog.at_level(logging.DEBUG):
+        exit_code = main(
+            [
+                "--csv",
+                str(FIXTURE_CSV),
+                "--target",
+                str(target),
+                "--gemini-api-key",
+                SENTINEL_KEY,
+                "--model",
+                "fake-model",
+                "--no-cache",
+                "-v",
+            ]
+        )
+
+    assert exit_code == 0
+
+    captured = capsys.readouterr()
+    assert SENTINEL_KEY not in captured.out
+    assert SENTINEL_KEY not in captured.err
+    assert all(SENTINEL_KEY not in record.getMessage() for record in caplog.records)
+
+
+def test_gemini_client_from_model_chain_probe_failure_never_logs_the_key(
+    monkeypatch, caplog
+):
+    """`from_model_chain` probes each candidate model and logs a warning
+    (with the caught exception) on failure — that exception is never
+    constructed from `self.api_key`, so it can't echo it back either."""
+
+    def _boom_get_client(self):
+        raise RuntimeError("simulated probe failure, no key referenced")
+
+    monkeypatch.setattr(GeminiClient, "_get_client", _boom_get_client)
+
+    with caplog.at_level(logging.DEBUG):
+        try:
+            GeminiClient.from_model_chain(api_key=SENTINEL_KEY, models=["fake-model"])
+        except LlmSynthesisError:
+            pass
+
+    assert all(SENTINEL_KEY not in record.getMessage() for record in caplog.records)
 
 
 def test_gemini_client_repr_does_not_leak_key():

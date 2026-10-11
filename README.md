@@ -17,7 +17,7 @@ for higher-quality deduplication and rewriting — see
 
 ```bash
 git clone <this repo> && cd Learnings2AGENTS
-make run CSV=/home/rkishner/Downloads/learnings.csv TARGET=/home/rkishner/github_repo/hyperconverged-cluster-operator
+make run CSV=/path/to/learnings.csv TARGET=/path/to/checked-out/repo
 ```
 
 That's it — `make run` creates a local virtualenv, installs dependencies,
