@@ -9,8 +9,10 @@ from the start" decision, as opposed to a single-file-then-split design).
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
+from learnings2agents.config import AGENTS_FILENAME
 from learnings2agents.models import DirGroup, Learning
 
 logger = logging.getLogger(__name__)
@@ -61,3 +63,27 @@ def filter_existing_directories(
             target_path,
         )
     return kept
+
+
+def target_has_any_agents_md(target: str | Path) -> bool:
+    """Return True if `target` (or any directory under it) already contains
+    an `AGENTS_FILENAME` file, checked **before** this run writes anything.
+
+    Used by the CLI to detect a "fresh" target repository (one that has
+    never used this tool, or any AGENTS.md convention, before) so it can:
+    - omit the `<!-- BEGIN/END CODERABBIT LEARNINGS -->` markers on newly
+      created files (no previous machine-generated section exists yet to
+      need re-finding on a future run), and
+    - attempt to consolidate everything into a single root AGENTS.md
+      instead of the usual one-file-per-directory split.
+
+    Dot-directories (e.g. `.git`, `.venv`) are skipped — AGENTS.md is never
+    meaningfully placed inside them, and skipping avoids walking
+    potentially huge directories on large repository checkouts.
+    """
+    target_path = Path(target)
+    for _root, dirnames, filenames in os.walk(target_path):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        if AGENTS_FILENAME in filenames:
+            return True
+    return False

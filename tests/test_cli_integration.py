@@ -46,6 +46,40 @@ def test_cli_end_to_end_heuristic_mode_writes_expected_agents_md(tmp_path):
     content = (target / "utilities" / "unittests" / "AGENTS.md").read_text(
         encoding="utf-8"
     )
+    # `target` had no AGENTS.md files at all before this run, so the
+    # generated section omits the CODERABBIT LEARNINGS markers (see
+    # `tree.target_has_any_agents_md`) — there's no previous
+    # machine-generated block that a future run would need to re-find.
+    assert "<!-- BEGIN CODERABBIT LEARNINGS -->" not in content
+    assert "<!-- END CODERABBIT LEARNINGS -->" not in content
+    assert "## Learnings from CodeRabbit" in content
+
+
+def test_cli_includes_markers_when_target_already_has_an_agents_md(tmp_path):
+    """Once a target repository has used this tool (or AGENTS.md) at all,
+    newly-created files go back to including the markers normally."""
+    target = _make_target_repo(tmp_path)
+    # A single pre-existing AGENTS.md anywhere under target is enough to mark
+    # this repository as "not fresh" for every directory in this run.
+    (target / "AGENTS.md").write_text(
+        "# AGENTS.md\n\nPre-existing.\n", encoding="utf-8"
+    )
+
+    exit_code = main(
+        [
+            "--csv",
+            str(FIXTURE_CSV),
+            "--target",
+            str(target),
+            "--no-cache",
+        ]
+    )
+
+    assert exit_code == 0
+
+    content = (target / "utilities" / "unittests" / "AGENTS.md").read_text(
+        encoding="utf-8"
+    )
     assert "<!-- BEGIN CODERABBIT LEARNINGS -->" in content
     assert "<!-- END CODERABBIT LEARNINGS -->" in content
 
@@ -138,10 +172,18 @@ def test_cli_merges_new_learnings_into_existing_agents_md(tmp_path, monkeypatch)
             )
         ]
 
+    def _fake_dedupe_bullets(self, directory, existing_content, bullets):
+        # Identity pass-through: this test isn't exercising the redundancy
+        # re-check itself (see test_synthesize.py for that), just making
+        # sure the CLI's existing merge-plan behavior still works end to end
+        # now that this check also runs. Avoids a real network call too.
+        return bullets
+
     monkeypatch.setattr(GeminiClient, "plan_agents_md_merge", _fake_plan_merge)
     monkeypatch.setattr(
         GeminiClient, "synthesize_directory", _fake_synthesize_directory
     )
+    monkeypatch.setattr(GeminiClient, "dedupe_bullets", _fake_dedupe_bullets)
 
     exit_code = main(
         [
@@ -172,3 +214,98 @@ def test_cli_merges_new_learnings_into_existing_agents_md(tmp_path, monkeypatch)
     # synthesize-from-scratch path instead.
     root_content = (target / "AGENTS.md").read_text(encoding="utf-8")
     assert "Bullet for root." in root_content
+
+
+def test_cli_consolidates_into_a_single_root_agents_md_when_fresh_and_gemini_available(
+    tmp_path, monkeypatch
+):
+    """Requirement #2: a fresh target (no AGENTS.md anywhere yet) + a Gemini
+    key makes the CLI attempt to write ONE consolidated root AGENTS.md
+    instead of its usual one-file-per-directory split."""
+    target = _make_target_repo(tmp_path)
+
+    root_bullets = [
+        SynthesizedBullet(text="Consolidated rule one.", heading="General"),
+        SynthesizedBullet(text="Consolidated rule two.", heading="Testing"),
+    ]
+
+    def _fake_synthesize_root(self, groups):
+        return root_bullets
+
+    def _fake_dedupe_bullets(self, directory, existing_content, bullets):
+        return bullets
+
+    monkeypatch.setattr(GeminiClient, "synthesize_root", _fake_synthesize_root)
+    monkeypatch.setattr(GeminiClient, "dedupe_bullets", _fake_dedupe_bullets)
+
+    exit_code = main(
+        [
+            "--csv",
+            str(FIXTURE_CSV),
+            "--target",
+            str(target),
+            "--gemini-api-key",
+            "fake-key",
+            "--model",
+            "fake-model",
+            "--no-cache",
+        ]
+    )
+
+    assert exit_code == 0
+
+    content = (target / "AGENTS.md").read_text(encoding="utf-8")
+    assert "Consolidated rule one." in content
+    assert "Consolidated rule two." in content
+    # Fresh target -> no markers in the (only) file written.
+    assert "<!-- BEGIN CODERABBIT LEARNINGS -->" not in content
+
+    # No per-directory files were written — everything landed in the root.
+    assert not (target / "utilities" / "AGENTS.md").exists()
+    assert not (target / "utilities" / "unittests" / "AGENTS.md").exists()
+    assert not (target / "tests" / "network" / "libs" / "AGENTS.md").exists()
+
+
+def test_cli_falls_back_to_per_directory_pipeline_when_root_consolidation_fails(
+    tmp_path, monkeypatch
+):
+    """If root consolidation itself fails (LLM error), the CLI falls back to
+    the regular one-AGENTS.md-per-directory pipeline rather than aborting."""
+    from learnings2agents.llm import LlmSynthesisError
+
+    target = _make_target_repo(tmp_path)
+
+    def _fake_synthesize_root(self, groups):
+        raise LlmSynthesisError("boom")
+
+    def _fake_synthesize_directory(self, directory, learnings):
+        return [SynthesizedBullet(text=f"Bullet for {directory or 'root'}.")]
+
+    def _fake_dedupe_bullets(self, directory, existing_content, bullets):
+        return bullets
+
+    monkeypatch.setattr(GeminiClient, "synthesize_root", _fake_synthesize_root)
+    monkeypatch.setattr(
+        GeminiClient, "synthesize_directory", _fake_synthesize_directory
+    )
+    monkeypatch.setattr(GeminiClient, "dedupe_bullets", _fake_dedupe_bullets)
+
+    exit_code = main(
+        [
+            "--csv",
+            str(FIXTURE_CSV),
+            "--target",
+            str(target),
+            "--gemini-api-key",
+            "fake-key",
+            "--model",
+            "fake-model",
+            "--no-cache",
+        ]
+    )
+
+    assert exit_code == 0
+    assert (target / "AGENTS.md").is_file()
+    assert (target / "utilities" / "AGENTS.md").is_file()
+    assert (target / "utilities" / "unittests" / "AGENTS.md").is_file()
+    assert (target / "tests" / "network" / "libs" / "AGENTS.md").is_file()

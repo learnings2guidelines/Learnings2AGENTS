@@ -21,7 +21,9 @@ def _cache_key(path: str, learnings: list[Learning], mode: str, model: str) -> s
     payload = {
         "path": path,
         "mode": mode,
-        "model": model if mode == "llm" else "",
+        # Any LLM-backed mode (e.g. "llm", "llm-root") is model-sensitive;
+        # "heuristic" never calls out to a model at all.
+        "model": model if mode.startswith("llm") else "",
         "texts": sorted(f"{learning.file}::{learning.text}" for learning in learnings),
     }
     blob = json.dumps(payload, sort_keys=True).encode("utf-8")

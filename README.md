@@ -17,7 +17,7 @@ for higher-quality deduplication and rewriting — see
 
 ```bash
 git clone <this repo> && cd Learnings2AGENTS
-make run CSV=/path/to/learnings.csv TARGET=/path/to/checked-out/repo
+make run CSV=/home/rkishner/Downloads/learnings.csv TARGET=/home/rkishner/github_repo/hyperconverged-cluster-operator
 ```
 
 That's it — `make run` creates a local virtualenv, installs dependencies,
@@ -82,6 +82,10 @@ python -m learnings2agents.cli --help
    Gemini key is given **and** that directory's `AGENTS.md` already exists,
    step 4 is skipped in favor of a patch-based merge into the existing file
    — see [`## What does a Gemini API key add?`](#what-does-a-gemini-api-key-add).
+   **Exception:** if the target had **no** `AGENTS.md` files at all before
+   this run, the markers are omitted from newly-written files — there's no
+   previous machine-generated section to re-find on a future run yet, so
+   they'd just be noise in a brand-new file.
 
 Results are cached (`<target>/.learnings2agents_cache/` by default, disable
 with `--no-cache`) so re-running against an unchanged CSV/target skips
@@ -118,6 +122,24 @@ synthesis step:
   fails (network/parsing error), that directory automatically falls back to
   the regular marker-section-only synthesis below instead of aborting the
   run.
+- **Consolidating a brand-new repository into one root `AGENTS.md`** — if
+  the target had **no** `AGENTS.md` files at all before this run, Gemini is
+  given *every* directory's learnings at once (each tagged with its
+  original directory) and asked to make a best effort to fold them into a
+  single, thematically-organized root-level `AGENTS.md`, instead of writing
+  one small file per directory. This is a "try", not a guarantee: if the
+  consolidation call fails or returns nothing usable, the tool transparently
+  falls back to the regular one-file-per-directory pipeline described
+  above. See [`## Design notes`](#design-notes) for the trade-off this
+  addresses.
+- **A final redundancy re-check** — right after a directory's (or, in
+  consolidated-root mode, the whole run's) new bullets are finalized,
+  Gemini is asked once more whether any of those *new* bullets are already
+  covered by something else — either existing content already in the file,
+  or another new bullet earlier in the same batch — and any that are get
+  dropped before writing, rather than leaving a near-duplicate rule behind.
+  A failure here is logged and simply keeps all the new bullets as-is; it
+  never blocks a write.
 
 None of this is required to use the tool; it only affects how polished the
 generated bullets are. The model used defaults to `gemini-2.5-flash`
@@ -218,8 +240,13 @@ existing per-file structure, is cheap to cache/re-run, and scales to CSVs
 covering many repositories. The trade-off is that if the exact same
 convention was learned separately in several different directories, it will
 appear once (deduplicated) in each of those directories' files rather than
-being consolidated into one parent/root file — cross-folder consolidation is
-a possible future enhancement, not part of this tool.
+being consolidated into one parent/root file. The one exception is a
+brand-new target (no `AGENTS.md` files anywhere yet) with a Gemini key
+available: there, the tool instead makes a best effort to consolidate
+*everything* into a single root `AGENTS.md` from the start (see
+[`## What does a Gemini API key add?`](#what-does-a-gemini-api-key-add)) —
+once that root file (or any `AGENTS.md`) exists, later runs go back to the
+regular per-directory split described above.
 
 **A note on merging into existing files:** when a Gemini key is used and a
 directory's `AGENTS.md` already exists, the LLM is given the whole file as
@@ -241,17 +268,26 @@ src/learnings2agents/
   config.py         # defaults: model name, similarity threshold, cache dir
   models.py         # Learning / DirGroup / SynthesizedBullet / TextEdit / MergePlan
   csv_loader.py      # parse the CSV, filter/auto-detect repository
-  tree.py            # group learnings by directory, verify against target
+  tree.py            # group learnings by directory, verify against target;
+                       # target_has_any_agents_md() detects a fresh target
   llm.py             # Gemini client wrapper (google-genai): fresh-file synthesis
-                       # (synthesize_directory) and existing-file merge planning
-                       # (plan_agents_md_merge), used only with a key
+                       # (synthesize_directory), existing-file merge planning
+                       # (plan_agents_md_merge), cross-directory root
+                       # consolidation (synthesize_root), and the final
+                       # redundancy re-check (dedupe_bullets) — all used only
+                       # with a key
   heuristics.py       # offline fallback: difflib-based near-duplicate clustering
   synthesize.py        # per-directory synthesis orchestration + cache lookup;
                         # routes to the merge-plan path when a directory's
-                        # AGENTS.md already exists (LLM mode only)
+                        # AGENTS.md already exists (LLM mode only); also runs
+                        # the dedupe_bullets re-check before finalizing bullets.
+                        # synthesize_consolidated_root() is the single-root-file
+                        # alternative used for a fresh target + a Gemini key.
   writer.py            # render Markdown, merge into existing AGENTS.md files;
                         # apply_merge_plan() applies an LLM merge plan's edits +
-                        # new bullets onto an existing file's full content
+                        # new bullets onto an existing file's full content;
+                        # omit_markers= drops the CODERABBIT LEARNINGS markers
+                        # for a target that had no AGENTS.md files before
   cache.py             # on-disk content-hash cache for synthesis results and
                         # merge plans (the latter also keyed on file content)
 tests/

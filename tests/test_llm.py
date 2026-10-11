@@ -9,8 +9,14 @@ import json
 
 import pytest
 
-from learnings2agents.llm import GeminiClient, LlmSynthesisError, _build_merge_prompt
-from learnings2agents.models import Learning
+from learnings2agents.llm import (
+    GeminiClient,
+    LlmSynthesisError,
+    _build_dedupe_prompt,
+    _build_merge_prompt,
+    _build_root_prompt,
+)
+from learnings2agents.models import DirGroup, Learning, SynthesizedBullet
 
 
 def _learning(
@@ -158,3 +164,123 @@ def test_plan_agents_md_merge_falls_back_to_all_prs_when_sources_missing():
     plan = client.plan_agents_md_merge("utilities", learnings, "content")
 
     assert set(plan.new_bullets[0].pull_requests) == {"1", "2"}
+
+
+# --- synthesize_root (requirement #2: consolidate everything into one
+# root AGENTS.md when the target repo is fresh and a Gemini key exists). ---
+
+
+def test_build_root_prompt_tags_each_learning_with_its_directory():
+    groups = [
+        DirGroup(path="utilities", learnings=[_learning("Do X.")]),
+        DirGroup(path="", learnings=[_learning("Do Y.")]),
+    ]
+    prompt = _build_root_prompt(groups)
+
+    assert "[dir: utilities] Do X." in prompt
+    assert "[dir: (repository root)] Do Y." in prompt
+
+
+def test_synthesize_root_parses_bullets_and_attributes_prs():
+    groups = [
+        DirGroup(path="utilities", learnings=[_learning("Do X.", pull_request="1")]),
+        DirGroup(path="tests", learnings=[_learning("Do Y.", pull_request="2")]),
+    ]
+    payload = [
+        {"text": "Do X and Y.", "heading": "General", "sources": [1, 2]},
+    ]
+    client = _client_with_fake_backend(response_text=json.dumps(payload))
+
+    bullets = client.synthesize_root(groups)
+
+    assert len(bullets) == 1
+    assert bullets[0].text == "Do X and Y."
+    assert bullets[0].heading == "General"
+    assert set(bullets[0].pull_requests) == {"1", "2"}
+
+
+def test_synthesize_root_raises_when_there_are_no_learnings_at_all():
+    client = _client_with_fake_backend(response_text="[]")
+    with pytest.raises(LlmSynthesisError):
+        client.synthesize_root([DirGroup(path="utilities", learnings=[])])
+
+
+def test_synthesize_root_raises_on_api_error():
+    groups = [DirGroup(path="utilities", learnings=[_learning("Do X.")])]
+    client = _client_with_fake_backend(error=RuntimeError("boom"))
+    with pytest.raises(LlmSynthesisError):
+        client.synthesize_root(groups)
+
+
+def test_synthesize_root_raises_when_no_usable_bullets_come_back():
+    groups = [DirGroup(path="utilities", learnings=[_learning("Do X.")])]
+    client = _client_with_fake_backend(response_text=json.dumps([{"text": ""}]))
+    with pytest.raises(LlmSynthesisError):
+        client.synthesize_root(groups)
+
+
+# --- dedupe_bullets (requirement #3: re-check new bullets against existing
+# content and each other, dropping any that are already covered). ---
+
+
+def test_build_dedupe_prompt_lists_existing_content_and_numbered_bullets():
+    bullets = [
+        SynthesizedBullet(text="Do X.", heading="Imports"),
+        SynthesizedBullet(text="Do Y."),
+    ]
+    prompt = _build_dedupe_prompt("utilities", "- Old rule.\n", bullets)
+
+    assert "- Old rule." in prompt
+    assert "1. Do X. [heading: Imports]" in prompt
+    assert "2. Do Y." in prompt
+    assert "Directory: utilities" in prompt
+
+
+def test_build_dedupe_prompt_notes_brand_new_file_when_existing_content_is_empty():
+    prompt = _build_dedupe_prompt("", "", [SynthesizedBullet(text="Do X.")])
+    assert "(empty — this is a brand-new file)" in prompt
+    assert "Directory: (repository root)" in prompt
+
+
+def test_dedupe_bullets_returns_input_unchanged_when_empty():
+    client = _client_with_fake_backend(response_text="should not be used")
+    assert client.dedupe_bullets("utilities", "content", []) == []
+
+
+def test_dedupe_bullets_keeps_only_indices_in_keep_list():
+    bullets = [
+        SynthesizedBullet(text="Keep me."),
+        SynthesizedBullet(text="Already covered."),
+    ]
+    client = _client_with_fake_backend(response_text=json.dumps({"keep": [1]}))
+
+    kept = client.dedupe_bullets("utilities", "existing", bullets)
+
+    assert [b.text for b in kept] == ["Keep me."]
+
+
+def test_dedupe_bullets_keeps_all_when_keep_list_includes_everything():
+    bullets = [SynthesizedBullet(text="A."), SynthesizedBullet(text="B.")]
+    client = _client_with_fake_backend(response_text=json.dumps({"keep": [1, 2]}))
+
+    kept = client.dedupe_bullets("utilities", "", bullets)
+
+    assert [b.text for b in kept] == ["A.", "B."]
+
+
+def test_dedupe_bullets_raises_on_api_error():
+    client = _client_with_fake_backend(error=RuntimeError("boom"))
+    with pytest.raises(LlmSynthesisError):
+        client.dedupe_bullets("utilities", "content", [SynthesizedBullet(text="A.")])
+
+
+def test_dedupe_bullets_raises_on_unparsable_json():
+    client = _client_with_fake_backend(response_text="not json at all")
+    with pytest.raises(LlmSynthesisError):
+        client.dedupe_bullets("utilities", "content", [SynthesizedBullet(text="A.")])
+
+
+def test_dedupe_bullets_raises_when_response_missing_keep_list():
+    client = _client_with_fake_backend(response_text=json.dumps({"other": []}))
+    with pytest.raises(LlmSynthesisError):
+        client.dedupe_bullets("utilities", "content", [SynthesizedBullet(text="A.")])

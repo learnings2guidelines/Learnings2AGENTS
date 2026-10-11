@@ -84,6 +84,20 @@ def test_merge_plan_cache_is_invalidated_when_existing_content_changes(tmp_path)
     )
 
 
+def test_regular_cache_is_model_sensitive_for_llm_root_mode(tmp_path):
+    """`llm-root` (the consolidated-root synthesis mode, requirement #2) is
+    LLM-backed just like `llm`, so switching models must be a cache miss —
+    unlike `heuristic`, which never calls out to a model at all."""
+    cache = SynthesisCache(tmp_path / "cache")
+    learnings = [_learning("Do X.")]
+    bullets = [SynthesizedBullet(text="Do X.")]
+
+    cache.set("", learnings, "llm-root", "gemini-a", bullets)
+
+    assert cache.get("", learnings, "llm-root", "gemini-b") is None
+    assert cache.get("", learnings, "llm-root", "gemini-a") is not None
+
+
 def test_merge_plan_cache_is_separate_from_regular_bullet_cache(tmp_path):
     """Same path/learnings/model shouldn't collide between the two cache kinds."""
     cache = SynthesisCache(tmp_path / "cache")

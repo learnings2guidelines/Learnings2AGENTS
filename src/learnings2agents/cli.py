@@ -26,10 +26,15 @@ from learnings2agents.csv_loader import (
     load_learnings,
     select_repository,
 )
-from learnings2agents.llm import GeminiClient
-from learnings2agents.synthesize import synthesize_all
-from learnings2agents.tree import filter_existing_directories, group_by_directory
-from learnings2agents.writer import write_all
+from learnings2agents.llm import GeminiClient, LlmSynthesisError
+from learnings2agents.models import DirGroup
+from learnings2agents.synthesize import synthesize_all, synthesize_consolidated_root
+from learnings2agents.tree import (
+    filter_existing_directories,
+    group_by_directory,
+    target_has_any_agents_md,
+)
+from learnings2agents.writer import write_agents_md, write_all
 
 logger = logging.getLogger("learnings2agents")
 
@@ -145,6 +150,21 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("Target directory not found: %s", target_path)
         return 1
 
+    # Checked once, up front, before anything is written: did this target
+    # repository already have at least one AGENTS.md file before this run?
+    # If not, newly-created files skip the <!-- BEGIN/END CODERABBIT
+    # LEARNINGS --> markers (nothing to re-find on a future run yet), and —
+    # when a Gemini key is also available — the tool attempts to
+    # consolidate everything into a single root AGENTS.md instead of the
+    # usual one-file-per-directory split (see `target_has_any_agents_md`).
+    repo_had_no_agents_md = not target_has_any_agents_md(target_path)
+    if repo_had_no_agents_md:
+        logger.info(
+            "No existing AGENTS.md found anywhere under target %s: generated "
+            "sections will omit the CODERABBIT LEARNINGS markers.",
+            target_path,
+        )
+
     try:
         learnings = load_learnings(csv_path)
     except CsvFormatError as exc:
@@ -219,9 +239,62 @@ def main(argv: list[str] | None = None) -> int:
         )
         cache = SynthesisCache(cache_dir)
 
+    # Fresh target + a Gemini key available: make a best effort to
+    # consolidate every directory's learnings into one root AGENTS.md
+    # instead of the usual one-file-per-directory split. This is a "try",
+    # not a guarantee — any failure falls back to the regular pipeline
+    # below exactly as if this branch had never been attempted.
+    if repo_had_no_agents_md and gemini_client is not None:
+        logger.info(
+            "Fresh target + Gemini key: attempting to consolidate learnings "
+            "from all %d director%s into a single root AGENTS.md…",
+            len(groups),
+            "y" if len(groups) == 1 else "ies",
+        )
+        try:
+            root_bullets = synthesize_consolidated_root(
+                groups, gemini_client, cache=cache
+            )
+        except LlmSynthesisError as exc:
+            logger.warning(
+                "Root consolidation failed (%s); falling back to the regular "
+                "one-AGENTS.md-per-directory pipeline.",
+                exc,
+            )
+        else:
+            root_group = DirGroup(path="", bullets=root_bullets)
+            result = write_agents_md(
+                target_path, root_group, dry_run=args.dry_run, omit_markers=True
+            )
+            logger.info(
+                "%-45s bullets=%-3d mode=%-9s -> %s (%s)",
+                root_group.display_path,
+                len(root_bullets),
+                "llm-root",
+                result.path,
+                result.action,
+            )
+            if args.dry_run:
+                logger.info(
+                    "[dry-run] Would write a single consolidated root "
+                    "AGENTS.md (%d bullet(s)).",
+                    len(root_bullets),
+                )
+            else:
+                logger.info(
+                    "Done: wrote one consolidated root AGENTS.md (%d "
+                    "bullet(s)) covering all %d director%s.",
+                    len(root_bullets),
+                    len(groups),
+                    "y" if len(groups) == 1 else "ies",
+                )
+            return 0
+
     synthesize_all(groups, gemini_client, cache=cache, target=target_path)
 
-    results = write_all(groups, target_path, dry_run=args.dry_run)
+    results = write_all(
+        groups, target_path, dry_run=args.dry_run, omit_markers=repo_had_no_agents_md
+    )
 
     for group, result in zip(groups, results):
         # Merged directories have no structured bullet list (the LLM's

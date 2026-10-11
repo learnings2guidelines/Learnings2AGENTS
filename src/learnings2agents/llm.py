@@ -11,7 +11,13 @@ import logging
 import re
 
 from learnings2agents.config import DEFAULT_GEMINI_MODEL, DEFAULT_GEMINI_MODEL_CHAIN
-from learnings2agents.models import Learning, MergePlan, SynthesizedBullet, TextEdit
+from learnings2agents.models import (
+    DirGroup,
+    Learning,
+    MergePlan,
+    SynthesizedBullet,
+    TextEdit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +125,90 @@ def _build_merge_prompt(
         lines.append(f"{i}. {pr_note} {learning.text}")
     lines.append("")
     lines.append("Produce the JSON patch object now.")
+    return "\n".join(lines)
+
+
+_ROOT_SYSTEM_PROMPT = """\
+You are building a SINGLE, repository-root AGENTS.md file from raw \
+"learnings" recorded by the CodeRabbit code review tool across MANY \
+different directories of a code repository. Each numbered learning below \
+is tagged with the directory it was originally recorded against. This \
+repository has no existing AGENTS.md files at all yet, so your goal is to \
+consolidate everything into one coherent, well-organized root-level file \
+instead of scattering near-identical rules across many small per-directory \
+files.
+
+Task: merge duplicate or overlapping learnings — including ones recorded \
+against different directories that express the same underlying convention \
+— into one rule stated once, generalized across the whole repository where \
+that's accurate. Rewrite the result as short, direct, imperative guidance \
+suitable for an AGENTS.md file consumed by AI coding agents (e.g. "Use \
+`TimeoutSampler` instead of bare `time.sleep()`"). Assign a short thematic \
+"heading" to EVERY bullet (e.g. "Imports", "Testing", "Docstrings") to \
+organize the result, grouping related rules together regardless of which \
+directory they originally came from — this is the whole point of \
+producing one organized file instead of many. If a rule genuinely only \
+applies to one specific directory/module and does not generalize, say so \
+explicitly in the bullet text itself (e.g. "In `tests/network/`, prefer \
+..."). Do not invent rules unsupported by the provided learnings. Drop \
+learnings that are too narrow/one-off to generalize into useful guidance.
+
+Respond with ONLY a JSON array (no surrounding prose, no markdown fences), \
+where each element is an object:
+  {"text": "<bullet text>", "heading": "<thematic heading, required>", \
+"sources": [<1-based numbers of the input learnings this bullet came from>]}
+"""
+
+
+def _build_root_prompt(groups: list[DirGroup]) -> str:
+    lines = ["Numbered learnings (each tagged with its original directory):", ""]
+    index = 1
+    for group in groups:
+        for learning in group.learnings:
+            lines.append(f"{index}. [dir: {group.display_path}] {learning.text}")
+            index += 1
+    lines.append("")
+    lines.append("Produce the JSON array now.")
+    return "\n".join(lines)
+
+
+_DEDUPE_SYSTEM_PROMPT = """\
+You are reviewing an AGENTS.md file right after new rules were synthesized \
+for it. You will be given the file's EXISTING CONTENT (it may be empty, \
+meaning this is a brand-new file with nothing in it yet) and a numbered \
+list of NEW RULES that were just synthesized to be added to it. Check \
+whether each NEW rule is already fully covered by either (a) something \
+already present in the EXISTING CONTENT, or (b) an earlier NEW rule in \
+this same numbered list — including a rule that says the same thing in \
+different words, or a specific instance of a rule already stated more \
+generally. When two NEW rules duplicate each other, drop the LATER one and \
+keep the earlier one. Keep a NEW rule only if it adds guidance that is not \
+already present anywhere else in the file or earlier in this list.
+
+Respond with ONLY a JSON object (no surrounding prose, no markdown fences) \
+of the form:
+  {"keep": [<1-based indices, from the numbered NEW rules list below, of \
+the rules that should be KEPT because they are not redundant>]}
+"""
+
+
+def _build_dedupe_prompt(
+    directory: str, existing_content: str, bullets: list[SynthesizedBullet]
+) -> str:
+    lines = [
+        f"Directory: {directory or '(repository root)'}",
+        "",
+        "=== EXISTING FILE CONTENT ===",
+        existing_content.strip() or "(empty — this is a brand-new file)",
+        "=== END EXISTING FILE CONTENT ===",
+        "",
+        "Numbered NEW rules just synthesized for this file:",
+    ]
+    for i, bullet in enumerate(bullets, start=1):
+        heading_note = f" [heading: {bullet.heading}]" if bullet.heading else ""
+        lines.append(f"{i}. {bullet.text}{heading_note}")
+    lines.append("")
+    lines.append("Produce the JSON object now.")
     return "\n".join(lines)
 
 
@@ -363,3 +453,153 @@ class GeminiClient:
             )
 
         return MergePlan(edits=edits, new_bullets=new_bullets)
+
+    def synthesize_root(self, groups: list[DirGroup]) -> list[SynthesizedBullet]:
+        """Best-effort consolidation of every group's learnings into a
+        single list of bullets for ONE repository-root AGENTS.md, instead
+        of the usual one-file-per-directory split.
+
+        Only called by the CLI when the target repository had no
+        `AGENTS.md` files at all before this run and a Gemini client is
+        available (see `cli.py`). Raises `LlmSynthesisError` on any API
+        failure, unparsable response, or if no usable bullets come back;
+        callers should fall back to the regular per-directory pipeline
+        (`synthesize_all` + `write_all`) in that case.
+        """
+        client = self._get_client()
+        all_learnings = [learning for group in groups for learning in group.learnings]
+        if not all_learnings:
+            raise LlmSynthesisError(
+                "No learnings to consolidate into a root AGENTS.md."
+            )
+
+        prompt = _build_root_prompt(groups)
+
+        try:
+            response = client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config={
+                    "system_instruction": _ROOT_SYSTEM_PROMPT,
+                    "temperature": 0.2,
+                    "response_mime_type": "application/json",
+                },
+            )
+        except Exception as exc:  # network/auth/quota errors, etc.
+            raise LlmSynthesisError(
+                f"Gemini root-consolidation call failed: {exc}"
+            ) from exc
+
+        raw_text = getattr(response, "text", None) or ""
+        try:
+            payload = json.loads(_extract_json(raw_text))
+        except json.JSONDecodeError as exc:
+            raise LlmSynthesisError(
+                f"Could not parse Gemini JSON output for root consolidation: "
+                f"{exc}. Raw output: {raw_text[:500]!r}"
+            ) from exc
+
+        if not isinstance(payload, list):
+            raise LlmSynthesisError(
+                f"Gemini root-consolidation output was not a JSON array: "
+                f"{raw_text[:500]!r}"
+            )
+
+        all_prs = _unique_pull_requests(all_learnings)
+        bullets: list[SynthesizedBullet] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text", "")).strip()
+            if not text:
+                continue
+            heading = str(item.get("heading") or "").strip()
+
+            source_indices = item.get("sources") or []
+            prs: list[str] = []
+            for idx in source_indices:
+                try:
+                    learning = all_learnings[int(idx) - 1]
+                except (TypeError, ValueError, IndexError):
+                    continue
+                if learning.pull_request and learning.pull_request not in prs:
+                    prs.append(learning.pull_request)
+            if not prs:
+                prs = all_prs
+
+            bullets.append(
+                SynthesizedBullet(text=text, pull_requests=prs, heading=heading)
+            )
+
+        if not bullets:
+            raise LlmSynthesisError(
+                "Gemini returned no usable bullets for root consolidation."
+            )
+        return bullets
+
+    def dedupe_bullets(
+        self,
+        directory: str,
+        existing_content: str,
+        bullets: list[SynthesizedBullet],
+    ) -> list[SynthesizedBullet]:
+        """Ask Gemini to double-check `bullets` (new rules about to be
+        written) against `existing_content` and each other, and drop any
+        that are already covered elsewhere instead of writing a redundant
+        duplicate rule.
+
+        Returns a possibly-shorter list; kept bullets are returned exactly
+        as given (order and attributes unchanged). Raises
+        `LlmSynthesisError` on any API failure or unparsable response;
+        callers should catch it and keep `bullets` as-is rather than
+        aborting the run over a failed sanity check.
+        """
+        if not bullets:
+            return bullets
+
+        client = self._get_client()
+        prompt = _build_dedupe_prompt(directory, existing_content, bullets)
+
+        try:
+            response = client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config={
+                    "system_instruction": _DEDUPE_SYSTEM_PROMPT,
+                    "temperature": 0.0,
+                    "response_mime_type": "application/json",
+                },
+            )
+        except Exception as exc:  # network/auth/quota errors, etc.
+            raise LlmSynthesisError(
+                f"Gemini dedupe-check call failed for directory "
+                f"'{directory or '(root)'}': {exc}"
+            ) from exc
+
+        raw_text = getattr(response, "text", None) or ""
+        try:
+            payload = json.loads(_extract_json(raw_text))
+        except json.JSONDecodeError as exc:
+            raise LlmSynthesisError(
+                f"Could not parse Gemini dedupe-check JSON output for "
+                f"directory '{directory or '(root)'}': {exc}. "
+                f"Raw output: {raw_text[:500]!r}"
+            ) from exc
+
+        if not isinstance(payload, dict) or not isinstance(payload.get("keep"), list):
+            raise LlmSynthesisError(
+                f"Gemini dedupe-check output for directory "
+                f"'{directory or '(root)'}' was not a JSON object with a "
+                f"'keep' list: {raw_text[:500]!r}"
+            )
+
+        keep_indices: set[int] = set()
+        for idx in payload["keep"]:
+            try:
+                keep_indices.add(int(idx))
+            except (TypeError, ValueError):
+                continue
+
+        return [
+            bullet for i, bullet in enumerate(bullets, start=1) if i in keep_indices
+        ]

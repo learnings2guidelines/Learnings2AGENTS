@@ -3,6 +3,7 @@ from __future__ import annotations
 from learnings2agents.config import BEGIN_MARKER, END_MARKER
 from learnings2agents.models import DirGroup, MergePlan, SynthesizedBullet, TextEdit
 from learnings2agents.writer import (
+    apply_edits,
     apply_merge_plan,
     merge_into_existing,
     parse_generated_bullets,
@@ -45,6 +46,15 @@ def test_render_section_wraps_in_markers():
     assert section.endswith(END_MARKER)
 
 
+def test_render_section_omits_markers_when_requested():
+    bullets = [SynthesizedBullet(text="Do X.", pull_requests=["1"])]
+    section = render_section(bullets, include_markers=False)
+    assert BEGIN_MARKER not in section
+    assert END_MARKER not in section
+    assert "Do X. (PR #1)" in section
+    assert "## Learnings from CodeRabbit" in section
+
+
 def test_merge_into_existing_replaces_between_markers():
     existing = (
         "# AGENTS.md\n\nHand-written intro.\n\n"
@@ -76,6 +86,18 @@ def test_write_agents_md_creates_new_file(tmp_path):
     content = result.path.read_text(encoding="utf-8")
     assert "Do X." in content
     assert BEGIN_MARKER in content
+
+
+def test_write_agents_md_omits_markers_for_a_brand_new_file(tmp_path):
+    group = DirGroup(
+        path="utilities", bullets=[SynthesizedBullet(text="Do X.", pull_requests=["1"])]
+    )
+    result = write_agents_md(tmp_path, group, omit_markers=True)
+    assert result.action == "created"
+    content = result.path.read_text(encoding="utf-8")
+    assert "Do X." in content
+    assert BEGIN_MARKER not in content
+    assert END_MARKER not in content
 
 
 def test_write_agents_md_skips_when_no_bullets(tmp_path):
@@ -282,3 +304,50 @@ def test_write_all_writes_into_correct_subdirectories(tmp_path):
     assert (tmp_path / "utilities" / "AGENTS.md").is_file()
     assert (tmp_path / "tests" / "network" / "AGENTS.md").is_file()
     assert all(r.action == "created" for r in results)
+
+
+def test_write_all_omits_markers_for_every_group_when_requested(tmp_path):
+    (tmp_path / "utilities").mkdir()
+    groups = [
+        DirGroup(
+            path="", bullets=[SynthesizedBullet(text="Root rule.", pull_requests=["1"])]
+        ),
+        DirGroup(
+            path="utilities",
+            bullets=[SynthesizedBullet(text="Utils rule.", pull_requests=["2"])],
+        ),
+    ]
+    write_all(groups, tmp_path, omit_markers=True)
+
+    for rel in ["AGENTS.md", "utilities/AGENTS.md"]:
+        content = (tmp_path / rel).read_text(encoding="utf-8")
+        assert BEGIN_MARKER not in content
+        assert END_MARKER not in content
+
+
+def test_apply_edits_applies_a_clean_edit():
+    content = "# AGENTS.md\n\n- Old rule.\n"
+    result = apply_edits(
+        content, [TextEdit(old_text="- Old rule.", new_text="- New rule.")]
+    )
+    assert "- New rule." in result
+    assert "- Old rule." not in result
+
+
+def test_apply_edits_skips_edit_when_old_text_not_found():
+    content = "# AGENTS.md\n\n- Some rule.\n"
+    result = apply_edits(
+        content, [TextEdit(old_text="- Missing rule.", new_text="- New rule.")]
+    )
+    assert result == content
+
+
+def test_apply_edits_skips_edit_when_old_text_is_ambiguous():
+    content = "# AGENTS.md\n\n- Dup.\n- Dup.\n"
+    result = apply_edits(content, [TextEdit(old_text="- Dup.", new_text="- Changed.")])
+    assert result == content
+
+
+def test_apply_edits_returns_content_unchanged_with_no_edits():
+    content = "# AGENTS.md\n\n- Rule.\n"
+    assert apply_edits(content, []) == content

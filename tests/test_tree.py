@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from learnings2agents.models import Learning
-from learnings2agents.tree import filter_existing_directories, group_by_directory
+from learnings2agents.tree import (
+    filter_existing_directories,
+    group_by_directory,
+    target_has_any_agents_md,
+)
 
 
 def _learning(file: str, text: str = "Some learning", **kwargs) -> Learning:
@@ -68,3 +72,31 @@ def test_filter_existing_directories_creates_when_requested(tmp_path):
     kept = filter_existing_directories(groups, tmp_path, create_missing_dirs=True)
     assert [g.path for g in kept] == ["missing_dir"]
     assert (tmp_path / "missing_dir").is_dir()
+
+
+def test_target_has_any_agents_md_false_on_empty_target(tmp_path):
+    assert target_has_any_agents_md(tmp_path) is False
+
+
+def test_target_has_any_agents_md_true_when_present_at_root(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("# AGENTS.md\n", encoding="utf-8")
+    assert target_has_any_agents_md(tmp_path) is True
+
+
+def test_target_has_any_agents_md_true_when_present_in_subdirectory(tmp_path):
+    nested = tmp_path / "utilities" / "unittests"
+    nested.mkdir(parents=True)
+    (nested / "AGENTS.md").write_text("# AGENTS.md\n", encoding="utf-8")
+    assert target_has_any_agents_md(tmp_path) is True
+
+
+def test_target_has_any_agents_md_ignores_dot_directories(tmp_path):
+    hidden = tmp_path / ".git"
+    hidden.mkdir()
+    (hidden / "AGENTS.md").write_text("# AGENTS.md\n", encoding="utf-8")
+    assert target_has_any_agents_md(tmp_path) is False
+
+
+def test_target_has_any_agents_md_false_when_other_files_present(tmp_path):
+    (tmp_path / "README.md").write_text("# README\n", encoding="utf-8")
+    assert target_has_any_agents_md(tmp_path) is False
